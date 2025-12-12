@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from dataclasses import dataclass, field
-from math import ceil, sqrt
+from math import ceil
 from typing import List
 
 
@@ -19,6 +19,7 @@ class Agent:
 
     identifier: int
     running: bool = field(default=False)
+    memory_type: str = field(default="Context")
 
     def start(self) -> None:
         self.running = True
@@ -36,9 +37,11 @@ class AgentDashboard:
         self.root.configure(bg="#2b2b2b")
 
         self.agents: List[Agent] = []
+        self.memory_types = ["Short-term", "Long-term", "Episodic"]
 
         self._setup_styles()
         self._build_layout()
+        self.agent_count.trace_add("write", self._sync_agent_count)
 
     def _setup_styles(self) -> None:
         self.bg_color = "#2b2b2b"
@@ -135,7 +138,13 @@ class AgentDashboard:
 
     def create_agents(self) -> None:
         count = max(1, self.agent_count.get())
-        self.agents = [Agent(identifier=i + 1) for i in range(count)]
+        self.agents = [
+            Agent(
+                identifier=i + 1,
+                memory_type=self.memory_types[i % len(self.memory_types)],
+            )
+            for i in range(count)
+        ]
         self.status_var.set(f"Created {len(self.agents)} agents")
         self._render_agents()
 
@@ -151,6 +160,51 @@ class AgentDashboard:
         self.status_var.set("Agents stopped")
         self._render_agents()
 
+    def _sync_agent_count(self, *_: object) -> None:
+        """Adjust the grid when the agent count slider changes."""
+
+        desired = max(1, self.agent_count.get())
+        current = len(self.agents)
+
+        if desired == current:
+            return
+
+        if desired > current:
+            for i in range(current, desired):
+                self.agents.append(
+                    Agent(
+                        identifier=i + 1,
+                        running=False,
+                        memory_type=self.memory_types[i % len(self.memory_types)],
+                    )
+                )
+            self.status_var.set(f"Added agents up to {desired} total")
+        else:
+            self.agents = self.agents[:desired]
+            self.status_var.set(f"Trimmed agents down to {desired} total")
+
+        self._render_agents()
+
+    @staticmethod
+    def _compute_grid_dimensions(count: int) -> tuple[int, int]:
+        """Return rows and columns for a compact, near-square grid."""
+
+        if count <= 0:
+            return (0, 0)
+
+        best_rows, best_cols = 1, count
+        best_area = best_cols * best_rows
+
+        for rows in range(1, count + 1):
+            cols = ceil(count / rows)
+            area = rows * cols
+            if area < best_area or (area == best_area and cols - rows < best_cols - best_rows):
+                best_rows, best_cols, best_area = rows, cols, area
+            if rows > cols:
+                break
+
+        return best_rows, best_cols
+
     def _render_agents(self) -> None:
         for widget in self.grid_frame.winfo_children():
             widget.destroy()
@@ -165,10 +219,10 @@ class AgentDashboard:
             empty.pack()
             return
 
-        grid_size = ceil(sqrt(len(self.agents)))
+        rows, cols = self._compute_grid_dimensions(len(self.agents))
 
         for index, agent in enumerate(self.agents):
-            row, col = divmod(index, grid_size)
+            row, col = divmod(index, cols)
             tile = tk.Frame(
                 self.grid_frame,
                 bg=self.button_bg,
@@ -198,8 +252,17 @@ class AgentDashboard:
                 font=("Segoe UI", 10),
             ).pack()
 
-        for i in range(grid_size):
+            tk.Label(
+                tile,
+                text=f"Memory: {agent.memory_type}",
+                bg=self.button_bg,
+                fg=self.fg_color,
+                font=("Segoe UI", 9),
+            ).pack(pady=(4, 0))
+
+        for i in range(cols):
             self.grid_frame.columnconfigure(i, weight=1)
+        for i in range(rows):
             self.grid_frame.rowconfigure(i, weight=1)
 
 
