@@ -704,9 +704,9 @@ class AgentDashboard:
         self.main.pack(fill=tk.BOTH, expand=True)
         self.main.pack_propagate(False)
 
-        # Card - disable propagation
-        self.card = tk.Frame(self.main, bg=t["card_bg"], padx=12, pady=8)
-        self.card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Card - fixed width, doesn't change when window expands
+        self.card = tk.Frame(self.main, bg=t["card_bg"], padx=12, pady=8, width=440)
+        self.card.pack(side=tk.LEFT, fill=tk.Y, expand=False)
         self.card.pack_propagate(False)
 
         # Header: Agents | count | toggle (all on same baseline)
@@ -1079,19 +1079,32 @@ class AgentDashboard:
         if self.settings_visible:
             return
         self.settings_visible = True
-        self.settings_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(6, 0))
-        # Ensure enough height for all action buttons (6 buttons + header)
+
+        panel_width = 200
+        cur_w = self.root.winfo_width()
         cur_h = self.root.winfo_height()
-        min_h = 400
-        new_h = max(cur_h, min_h)
-        self.root.geometry(f"640x{new_h}")
+        self._base_width = cur_w  # Remember original width
+
+        # Expand window to the right
+        self.root.geometry(f"{cur_w + panel_width}x{cur_h}")
+        self.root.update_idletasks()
+
+        # Place panel in the new space (right of fixed card)
+        main_h = self.main.winfo_height()
+        self.settings_panel.place(
+            x=450, y=0,  # Right after card (440 + padding)
+            width=panel_width - 10, height=main_h
+        )
 
     def _close_settings(self):
         if not self.settings_visible:
             return
         self.settings_visible = False
-        self.settings_panel.pack_forget()
-        self.root.geometry(f"460x{self.root.winfo_height()}")
+
+        # Hide panel and restore original width
+        self.settings_panel.place_forget()
+        cur_h = self.root.winfo_height()
+        self.root.geometry(f"{self._base_width}x{cur_h}")
 
     def _toggle_agent(self, agent_id: str, current_status: str):
         if current_status == "online":
@@ -1213,11 +1226,11 @@ def launch_dashboard() -> None:
         except Exception:
             pass
 
-    width, height = 460, 320
+    width, height = 460, 400
     x = (root.winfo_screenwidth() - width) // 2
     y = (root.winfo_screenheight() - height) // 2
     root.geometry(f"{width}x{height}+{x}+{y}")
-    root.minsize(380, 300)
+    root.minsize(380, 380)
 
     AgentDashboard(root)
 
