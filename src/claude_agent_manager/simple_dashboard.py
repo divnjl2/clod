@@ -63,6 +63,16 @@ class AgentDashboard:
         )
         header.pack(pady=(12, 8))
 
+        self.counter_var = tk.StringVar(value="Agents: 0")
+        counter = tk.Label(
+            self.root,
+            textvariable=self.counter_var,
+            bg=self.bg_color,
+            fg=self.fg_color,
+            font=("Segoe UI", 10),
+        )
+        counter.pack(pady=(0, 6))
+
         control_frame = tk.Frame(self.root, bg=self.bg_color)
         control_frame.pack(fill=tk.X, padx=16, pady=8)
 
@@ -150,34 +160,40 @@ class AgentDashboard:
             for i in range(count)
         ]
         self.status_var.set(f"Created {len(self.agents)} agents")
+        self._update_agent_counter()
         self._render_agents()
 
     def start_agents(self) -> None:
         for agent in self.agents:
             agent.start()
         self.status_var.set("Agents started")
+        self._update_agent_counter()
         self._render_agents()
 
     def stop_agents(self) -> None:
         for agent in self.agents:
             agent.stop()
         self.status_var.set("Agents stopped")
+        self._update_agent_counter()
         self._render_agents()
 
     def _start_agent(self, agent: Agent) -> None:
         agent.start()
         self.status_var.set(f"Started agent {agent.identifier}")
+        self._update_agent_counter()
         self._render_agents()
 
     def _stop_agent(self, agent: Agent) -> None:
         agent.stop()
         self.status_var.set(f"Stopped agent {agent.identifier}")
+        self._update_agent_counter()
         self._render_agents()
 
     def _delete_agent(self, agent: Agent) -> None:
         agent.delete()
         self.agents = [a for a in self.agents if a is not agent]
         self.status_var.set(f"Deleted agent {agent.identifier}")
+        self._update_agent_counter()
         self._render_agents()
 
     def _sync_agent_count(self, *_: object) -> None:
@@ -203,7 +219,13 @@ class AgentDashboard:
             self.agents = self.agents[:desired]
             self.status_var.set(f"Trimmed agents down to {desired} total")
 
+        self._update_agent_counter()
         self._render_agents()
+
+    def _update_agent_counter(self) -> None:
+        """Refresh the visible count of agents."""
+
+        self.counter_var.set(f"Agents: {len(self.agents)}")
 
     @staticmethod
     def _compute_grid_dimensions(count: int) -> tuple[int, int]:
