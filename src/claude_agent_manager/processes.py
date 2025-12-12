@@ -73,6 +73,53 @@ def pm2_delete(name: str) -> None:
     run_pm2(["delete", name])
 
 
+def pm2_stop(name: str) -> None:
+    """Stop a pm2 process by name."""
+    run_pm2(["stop", name])
+
+
+def pm2_restart(name: str) -> None:
+    """Restart a pm2 process by name."""
+    run_pm2(["restart", name])
+
+
+def pm2_status(name: str) -> Optional[dict]:
+    """Get status of a pm2 process by name. Returns dict with status info or None."""
+    import json
+    res = run_pm2(["jlist"])
+    if res.returncode != 0:
+        return None
+    try:
+        processes = json.loads(res.stdout)
+        for proc in processes:
+            if proc.get("name") == name:
+                return {
+                    "status": proc.get("pm2_env", {}).get("status", "unknown"),
+                    "pid": proc.get("pid"),
+                    "pm_id": proc.get("pm_id"),
+                }
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
+def spawn_cmd(project_path: str, port: int) -> Optional[int]:
+    """Spawn a command window with claude for the project."""
+    claude = which("claude")
+    if not claude:
+        return None
+
+    # Create a batch script that runs claude in the project directory
+    cmd = f'cd /d "{project_path}" && claude'
+    p = subprocess.Popen(
+        ["cmd.exe", "/k", cmd],
+        cwd=project_path,
+        creationflags=CREATE_NEW_CONSOLE,
+        env={**os.environ, "CLAUDE_MEM_WORKER_PORT": str(port)},
+    )
+    return p.pid
+
+
 def spawn_cmd_window(cmd_script: Path, workdir: Optional[str] = None) -> int:
     p = subprocess.Popen(
         ["cmd.exe", "/k", str(cmd_script)],
