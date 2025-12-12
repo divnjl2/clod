@@ -18,7 +18,7 @@ dependencies = [
 cam = "claude_agent_manager.cli:app"
 
 [project.gui-scripts]
-cam-gui = "claude_agent_manager.gui:main"
+cam-gui = "claude_agent_manager.simple_dashboard:launch_dashboard"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
