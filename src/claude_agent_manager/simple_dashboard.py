@@ -732,26 +732,26 @@ class AgentDashboard:
         )
         self.count_lbl.pack(side=tk.LEFT, padx=(8, 0))
 
-        # Add button (same line as Agents/count)
-        self.add_btn = tk.Label(
-            left_frame, text="+",
-            font=("Segoe UI", 12),
-            bg=t["card_bg"], fg=t["accent"],
-            cursor="hand2"
-        )
-        self.add_btn.pack(side=tk.LEFT, padx=(12, 0))
-        self.add_btn.bind("<Button-1>", lambda e: self._create_agent())
-        self.add_btn.bind("<Enter>", lambda e: self.add_btn.configure(fg=self.theme["fg"]))
-        self.add_btn.bind("<Leave>", lambda e: self.add_btn.configure(fg=self.theme["accent"]))
-
-        # Toggle (right side, vertically centered)
+        # Toggle (right side)
         self.theme_toggle = ToggleSwitch(
             self.header,
             on_toggle=self._on_theme_toggle,
             initial=self.is_dark
         )
-        self.theme_toggle.pack(side=tk.RIGHT, pady=2)
+        self.theme_toggle.pack(side=tk.RIGHT)
         self.theme_toggle.set_bg(t["card_bg"])
+
+        # Add button (right side, before toggle)
+        self.add_btn = tk.Label(
+            self.header, text="+",
+            font=("Segoe UI", 12),
+            bg=t["card_bg"], fg=t["accent"],
+            cursor="hand2"
+        )
+        self.add_btn.pack(side=tk.RIGHT, padx=(0, 10), pady=(0, 2))
+        self.add_btn.bind("<Button-1>", lambda e: self._create_agent())
+        self.add_btn.bind("<Enter>", lambda e: self.add_btn.configure(fg=self.theme["fg"]))
+        self.add_btn.bind("<Leave>", lambda e: self.add_btn.configure(fg=self.theme["accent"]))
 
         self.left_frame = left_frame
 
@@ -1203,6 +1203,15 @@ class AgentDashboard:
 
 def launch_dashboard() -> None:
     root = tk.Tk()
+
+    # Set app icon
+    icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
+    if icon_path.exists():
+        try:
+            icon = tk.PhotoImage(file=str(icon_path))
+            root.iconphoto(True, icon)
+        except Exception:
+            pass
 
     width, height = 460, 320
     x = (root.winfo_screenwidth() - width) // 2
