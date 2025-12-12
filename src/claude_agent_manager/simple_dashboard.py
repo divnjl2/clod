@@ -5,6 +5,7 @@ Compact card-based UI with smooth animations, theme toggle and agent settings.
 
 from __future__ import annotations
 
+import ctypes
 import tkinter as tk
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Callable
@@ -17,6 +18,24 @@ try:
     HAS_BACKEND = True
 except ImportError:
     HAS_BACKEND = False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WINDOWS TITLE BAR COLOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def set_title_bar_color(root: tk.Tk, is_dark: bool) -> None:
+    """Set Windows title bar color to match theme."""
+    try:
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        value = ctypes.c_int(1 if is_dark else 0)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(value), ctypes.sizeof(value)
+        )
+    except Exception:
+        pass  # Silently fail on non-Windows or older Windows
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -68,16 +87,16 @@ THEMES = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TOGGLE SWITCH (Bigger, theme-colored)
+# TOGGLE SWITCH (Modern, smooth, larger)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class ToggleSwitch(tk.Canvas):
-    """Animated toggle switch with smooth transitions."""
+    """Modern animated toggle switch with smooth transitions."""
 
     def __init__(
         self,
         parent: tk.Widget,
-        width: int = 50,
+        width: int = 52,
         height: int = 26,
         on_toggle: Callable[[bool], None] = None,
         initial: bool = True,
@@ -88,55 +107,65 @@ class ToggleSwitch(tk.Canvas):
         self.h = height
         self.on_toggle = on_toggle
         self.is_on = initial  # True = dark theme
-        self._knob_x = 0
-        self._target_x = 0
+        self._knob_x = 0.0
+        self._target_x = 0.0
         self._animating = False
-        # Store current visual state (may differ from is_on during animation)
         self._visual_state = initial
+        self._knob_padding = 2
+        self._knob_size = self.h - self._knob_padding * 2
+
+        # Canvas item IDs
+        self._track_ids = []
+        self._knob_id = None
 
         self.bind("<Button-1>", self._on_click)
         self.bind("<Enter>", lambda e: self.configure(cursor="hand2"))
 
         self._update_target()
         self._knob_x = self._target_x
-        self._draw()
+        self._create_items()
 
     def _update_target(self):
         """Calculate target knob position based on state."""
-        knob_size = self.h - 6
+        pad = self._knob_padding
         if self.is_on:
-            self._target_x = self.w - knob_size - 3
+            self._target_x = self.w - self._knob_size - pad
         else:
-            self._target_x = 3
+            self._target_x = pad
 
-    def _draw(self):
-        self.delete("all")
-        # Use visual state for colors (smooth transition)
+    def _create_items(self):
+        """Create canvas items once."""
         theme = THEMES["dark" if self._visual_state else "light"]
-
-        # Track
+        pad = self._knob_padding
+        ks = self._knob_size
         r = self.h // 2
-        track_color = theme["toggle_track"]
-        self.create_oval(0, 0, self.h, self.h, fill=track_color, outline="")
-        self.create_oval(self.w - self.h, 0, self.w, self.h, fill=track_color, outline="")
-        self.create_rectangle(r, 0, self.w - r, self.h, fill=track_color, outline="")
+
+        # Track (3 parts for pill shape)
+        self._track_ids = [
+            self.create_oval(0, 0, self.h, self.h, fill=theme["toggle_track"], outline=""),
+            self.create_oval(self.w - self.h, 0, self.w, self.h, fill=theme["toggle_track"], outline=""),
+            self.create_rectangle(r, 0, self.w - r, self.h, fill=theme["toggle_track"], outline=""),
+        ]
 
         # Knob
-        knob_size = self.h - 6
-        knob_color = theme["toggle_knob"]
-        self.create_oval(
-            self._knob_x, 3,
-            self._knob_x + knob_size, 3 + knob_size,
-            fill=knob_color, outline=""
+        self._knob_id = self.create_oval(
+            self._knob_x, pad,
+            self._knob_x + ks, pad + ks,
+            fill=theme["toggle_knob"], outline=""
         )
 
-        # Icon based on target state
-        icon = "🌙" if self.is_on else "☀"
-        self.create_text(
-            self._knob_x + knob_size // 2,
-            3 + knob_size // 2,
-            text=icon, font=("Segoe UI", 9)
-        )
+    def _update_knob_position(self):
+        """Move knob without recreating."""
+        pad = self._knob_padding
+        ks = self._knob_size
+        self.coords(self._knob_id, self._knob_x, pad, self._knob_x + ks, pad + ks)
+
+    def _update_colors(self):
+        """Update colors without recreating items."""
+        theme = THEMES["dark" if self._visual_state else "light"]
+        for tid in self._track_ids:
+            self.itemconfig(tid, fill=theme["toggle_track"])
+        self.itemconfig(self._knob_id, fill=theme["toggle_knob"])
 
     def _on_click(self, event=None):
         if self._animating:
@@ -147,29 +176,36 @@ class ToggleSwitch(tk.Canvas):
 
     def _animate(self, step: int = 0):
         total_steps = 10
+
+        # Fire callback at step 0 (before animation visually starts)
+        # This applies theme immediately, then knob animates over already-changed UI
+        if step == 0 and self.on_toggle:
+            self.on_toggle(self.is_on)
+
         if step >= total_steps:
             self._animating = False
             self._knob_x = self._target_x
             self._visual_state = self.is_on
-            self._draw()
-            if self.on_toggle:
-                self.on_toggle(self.is_on)
+            self._update_knob_position()
+            self._update_colors()
             return
 
         self._animating = True
-        # Ease-out animation
         progress = step / total_steps
-        ease = 1 - (1 - progress) ** 2  # Quadratic ease-out
+        ease = 1 - (1 - progress) ** 3
 
-        start_x = self.w - (self.h - 6) - 3 if not self.is_on else 3
+        pad = self._knob_padding
+        ks = self._knob_size
+        start_x = (self.w - ks - pad) if not self.is_on else pad
         end_x = self._target_x
         self._knob_x = start_x + (end_x - start_x) * ease
 
-        # Switch visual theme at midpoint for smooth feel
+        # Switch toggle colors at 50%
         if step == total_steps // 2:
             self._visual_state = self.is_on
+            self._update_colors()
 
-        self._draw()
+        self._update_knob_position()
         self.after(12, lambda: self._animate(step + 1))
 
     def set_bg(self, color: str):
@@ -177,11 +213,11 @@ class ToggleSwitch(tk.Canvas):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ANIMATED BUTTON
+# ANIMATED BUTTON (Simple Label - no Canvas flickering)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedButton(tk.Label):
-    """Button with hover animations."""
+    """Simple button with hover effects - no Canvas to avoid flickering."""
 
     def __init__(
         self,
@@ -191,14 +227,16 @@ class AnimatedButton(tk.Label):
         theme: Dict,
         style: str = "default",
         font_size: int = 9,
-        padx: int = 12,
-        pady: int = 4,
+        padx: int = 10,
+        pady: int = 3,
         **kwargs
     ):
         super().__init__(parent, **kwargs)
+        self.text_str = text
         self.command = command
         self.theme = theme
         self.style = style
+
         self._setup_colors()
 
         self.configure(
@@ -208,8 +246,7 @@ class AnimatedButton(tk.Label):
             fg=self.fg,
             padx=padx,
             pady=pady,
-            cursor="hand2",
-            relief=tk.FLAT,
+            cursor="hand2"
         )
 
         self.bind("<Enter>", self._on_enter)
@@ -253,6 +290,60 @@ class AnimatedButton(tk.Label):
         self.theme = theme
         self._setup_colors()
         self.configure(bg=self.default_bg, fg=self.fg)
+
+    def set_bg(self, color: str):
+        """Set background to match parent."""
+        pass  # Label bg is set directly
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ACTION BUTTON (for settings panel - simple Label)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ActionButton(tk.Label):
+    """Simple action button - no Canvas to avoid flickering."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        text: str,
+        command: Callable,
+        theme: Dict,
+        **kwargs
+    ):
+        super().__init__(parent, **kwargs)
+        self.text_str = text
+        self.command = command
+        self.theme = theme
+
+        self.configure(
+            text=text,
+            font=("Segoe UI Emoji", 9),  # Better emoji alignment
+            bg=theme["btn_bg"],
+            fg=theme["fg"],
+            anchor="w",
+            padx=10,
+            pady=4,
+            cursor="hand2"
+        )
+
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_click)
+
+    def _on_enter(self, event=None):
+        self.configure(bg=self.theme["btn_hover"])
+
+    def _on_leave(self, event=None):
+        self.configure(bg=self.theme["btn_bg"])
+
+    def _on_click(self, event=None):
+        if self.command:
+            self.command()
+
+    def update_theme(self, theme: Dict):
+        self.theme = theme
+        self.configure(bg=theme["btn_bg"], fg=theme["fg"])
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -331,8 +422,8 @@ class AgentSettingsPanel(tk.Frame):
         )
         self.close_btn.pack(side=tk.RIGHT)
         self.close_btn.bind("<Button-1>", lambda e: self.on_close())
-        self.close_btn.bind("<Enter>", lambda e: self.close_btn.configure(fg=t["fg"]))
-        self.close_btn.bind("<Leave>", lambda e: self.close_btn.configure(fg=t["fg_dim"]))
+        self.close_btn.bind("<Enter>", lambda e: self.close_btn.configure(fg=self.theme["fg"]))
+        self.close_btn.bind("<Leave>", lambda e: self.close_btn.configure(fg=self.theme["fg_dim"]))
 
         # Separator
         self.sep = tk.Frame(self, bg=t["separator"], height=1)
@@ -392,32 +483,24 @@ class AgentSettingsPanel(tk.Frame):
             btn.destroy()
         self.action_buttons.clear()
 
-        # Create action buttons
+        # Create action buttons with emoji
         actions = [
-            ("🧠 Memory Viewer", "memory"),
-            ("🔄 Restart Memory", "restart_memory"),
-            ("🌐 Open Browser", "browser"),
-            ("🔒 Proxy Settings", "proxy"),
-            ("📋 View Logs", "logs"),
-            ("🗑 Delete", "delete"),
+            ("🧠  Memory Viewer", "memory"),
+            ("🔄  Restart Memory", "restart_memory"),
+            ("🌐  Open Browser", "browser"),
+            ("🔒  Proxy Settings", "proxy"),
+            ("📋  View Logs", "logs"),
+            ("🗑  Delete", "delete"),
         ]
 
         for text, key in actions:
-            btn = tk.Label(
+            btn = ActionButton(
                 self.actions_frame,
                 text=text,
-                font=("Segoe UI", 9),
-                bg=t["btn_bg"],
-                fg=t["fg"],
-                anchor="w",
-                padx=10,
-                pady=6,
-                cursor="hand2"
+                command=lambda k=key: self._on_action(k),
+                theme=t
             )
             btn.pack(fill=tk.X, pady=1)
-            btn.bind("<Enter>", lambda e, b=btn: b.configure(bg=t["btn_hover"]))
-            btn.bind("<Leave>", lambda e, b=btn: b.configure(bg=t["btn_bg"]))
-            btn.bind("<Button-1>", lambda e, k=key: self._on_action(k))
             self.action_buttons.append(btn)
 
     def _on_action(self, action: str):
@@ -431,6 +514,9 @@ class AgentSettingsPanel(tk.Frame):
         self.header.configure(bg=t["card_bg"])
         self.title_lbl.configure(bg=t["card_bg"], fg=t["fg"])
         self.close_btn.configure(bg=t["card_bg"], fg=t["fg_dim"])
+        # Rebind hover with new theme colors
+        self.close_btn.bind("<Enter>", lambda e: self.close_btn.configure(fg=self.theme["fg"]))
+        self.close_btn.bind("<Leave>", lambda e: self.close_btn.configure(fg=self.theme["fg_dim"]))
         self.sep.configure(bg=t["separator"])
         self.content.configure(bg=t["card_bg"])
         self.info_frame.configure(bg=t["card_bg"])
@@ -442,7 +528,7 @@ class AgentSettingsPanel(tk.Frame):
 
         # Update action buttons
         for btn in self.action_buttons:
-            btn.configure(bg=t["btn_bg"], fg=t["fg"])
+            btn.update_theme(t)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -518,7 +604,8 @@ class AgentCard(tk.Frame):
             style=btn_style,
             font_size=8,
             padx=8,
-            pady=2
+            pady=2,
+            bg=t["card_bg"]  # Match parent bg to hide corners
         )
         self.toggle_btn.pack(side=tk.RIGHT, padx=(6, 0))
 
@@ -543,6 +630,7 @@ class AgentCard(tk.Frame):
             except:
                 pass
         self.status_dot.configure(bg=bg)
+        self.toggle_btn.set_bg(bg)
 
     def _on_leave(self, event=None):
         t = self.theme
@@ -554,6 +642,7 @@ class AgentCard(tk.Frame):
             except:
                 pass
         self.status_dot.configure(bg=bg)
+        self.toggle_btn.set_bg(bg)
 
     def _on_card_click(self, event=None):
         self.on_click_cb(self.agent_data)
@@ -578,6 +667,7 @@ class AgentCard(tk.Frame):
         self.status_dot.configure(bg=bg)
         self.status_dot.update_theme(t)
         self.toggle_btn.update_theme(t)
+        self.toggle_btn.set_bg(bg)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -602,47 +692,49 @@ class AgentDashboard:
         self._load_agents()
         self._schedule_refresh()
 
+        # Set initial title bar color
+        self.root.after(50, lambda: set_title_bar_color(self.root, self.is_dark))
+
     def _build_ui(self):
         t = self.theme
         self.root.configure(bg=t["bg"])
 
-        # Main container
+        # Main container - disable propagation to prevent layout jumps
         self.main = tk.Frame(self.root, bg=t["bg"], padx=10, pady=8)
         self.main.pack(fill=tk.BOTH, expand=True)
+        self.main.pack_propagate(False)
 
-        # Card
+        # Card - disable propagation
         self.card = tk.Frame(self.main, bg=t["card_bg"], padx=12, pady=8)
         self.card.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.card.pack_propagate(False)
 
-        # Header: Agents | count | toggle (all vertically centered)
-        self.header = tk.Frame(self.card, bg=t["card_bg"], height=28)
+        # Header: Agents | count | toggle (all on same baseline)
+        self.header = tk.Frame(self.card, bg=t["card_bg"])
         self.header.pack(fill=tk.X, pady=(0, 8))
-        self.header.pack_propagate(False)
 
-        # Left side container for title + count
+        # Left side container for title + count (baseline aligned)
         left_frame = tk.Frame(self.header, bg=t["card_bg"])
-        left_frame.pack(side=tk.LEFT, fill=tk.Y)
+        left_frame.pack(side=tk.LEFT)
 
         self.title_lbl = tk.Label(
             left_frame, text="Agents",
-            font=("Segoe UI Semibold", 13),
+            font=("Segoe UI Semibold", 12),
             bg=t["card_bg"], fg=t["fg"]
         )
-        self.title_lbl.pack(side=tk.LEFT, pady=2)
+        self.title_lbl.pack(side=tk.LEFT)
 
-        # Count label (same baseline)
+        # Count label (same font size for alignment)
         self.count_lbl = tk.Label(
             left_frame, text="0",
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 12),
             bg=t["card_bg"], fg=t["fg_dim"]
         )
-        self.count_lbl.pack(side=tk.LEFT, padx=(6, 0), pady=3)
+        self.count_lbl.pack(side=tk.LEFT, padx=(8, 0))
 
         # Toggle (right side, vertically centered)
         self.theme_toggle = ToggleSwitch(
             self.header,
-            width=48,
-            height=24,
             on_toggle=self._on_theme_toggle,
             initial=self.is_dark
         )
@@ -655,26 +747,28 @@ class AgentDashboard:
         self.sep = tk.Frame(self.card, bg=t["separator"], height=1)
         self.sep.pack(fill=tk.X, pady=(0, 8))
 
-        # Agents container
+        # Agents container - disable grid propagation
         self.agents_frame = tk.Frame(self.card, bg=t["card_bg"])
         self.agents_frame.pack(fill=tk.BOTH, expand=True)
+        self.agents_frame.grid_propagate(False)
 
-        # Settings panel (hidden)
+        # Settings panel (hidden) - disable propagation
         self.settings_panel = AgentSettingsPanel(
             self.main, theme=t, on_close=self._close_settings
         )
+        self.settings_panel.pack_propagate(False)
 
     def _on_theme_toggle(self, is_dark: bool):
         self.is_dark = is_dark
         self.theme = THEMES["dark" if is_dark else "light"]
+
+        # Apply all changes, let Tk batch them naturally
         self._apply_theme()
+        self.root.after_idle(lambda: set_title_bar_color(self.root, is_dark))
 
     def _apply_theme(self):
-        """Apply theme without re-rendering cards - batched for smoothness."""
+        """Apply theme colors to all widgets without re-rendering."""
         t = self.theme
-
-        # Freeze updates
-        self.root.update_idletasks()
 
         # Update main containers
         self.root.configure(bg=t["bg"])
@@ -688,7 +782,7 @@ class AgentDashboard:
         self.sep.configure(bg=t["separator"])
         self.agents_frame.configure(bg=t["card_bg"])
 
-        # Update existing cards without destroying them
+        # Update existing cards
         for card in self.agent_cards:
             card.update_theme(t)
 
@@ -704,9 +798,6 @@ class AgentDashboard:
                         child.configure(bg=t["card_bg"], fg=t["fg_dim"])
                     elif isinstance(child, AnimatedButton):
                         child.update_theme(t)
-
-        # Force redraw
-        self.root.update_idletasks()
 
     def _schedule_refresh(self):
         self._refresh_agents()
@@ -860,7 +951,11 @@ class AgentDashboard:
             return
         self.settings_visible = True
         self.settings_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(6, 0))
-        self.root.geometry(f"640x{self.root.winfo_height()}")
+        # Ensure enough height for all action buttons (6 buttons + header)
+        cur_h = self.root.winfo_height()
+        min_h = 400
+        new_h = max(cur_h, min_h)
+        self.root.geometry(f"640x{new_h}")
 
     def _close_settings(self):
         if not self.settings_visible:
@@ -980,11 +1075,11 @@ class AgentDashboard:
 def launch_dashboard() -> None:
     root = tk.Tk()
 
-    width, height = 460, 300
+    width, height = 460, 320
     x = (root.winfo_screenwidth() - width) // 2
     y = (root.winfo_screenheight() - height) // 2
     root.geometry(f"{width}x{height}+{x}+{y}")
-    root.minsize(380, 260)
+    root.minsize(380, 300)
 
     AgentDashboard(root)
 
