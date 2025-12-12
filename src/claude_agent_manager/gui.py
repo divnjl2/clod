@@ -49,6 +49,7 @@ class AgentManagerGUI:
         self._setup_styles()
         self._create_widgets()
         self._refresh_agents()
+        self._schedule_status_refresh()
 
     def _setup_styles(self):
         style = ttk.Style()
@@ -92,10 +93,11 @@ class AgentManagerGUI:
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # Treeview for agents
-        columns = ("id", "purpose", "mode", "port", "pm2", "cmd", "viewer", "project")
+        columns = ("id", "status", "purpose", "mode", "port", "pm2", "cmd", "viewer", "project")
         self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=10)
 
         self.tree.heading("id", text="ID")
+        self.tree.heading("status", text="Status")
         self.tree.heading("purpose", text="Purpose")
         self.tree.heading("mode", text="Mode")
         self.tree.heading("port", text="Port")
@@ -104,14 +106,15 @@ class AgentManagerGUI:
         self.tree.heading("viewer", text="Viewer")
         self.tree.heading("project", text="Project")
 
-        self.tree.column("id", width=100)
+        self.tree.column("id", width=90)
+        self.tree.column("status", width=80)
         self.tree.column("purpose", width=100)
         self.tree.column("mode", width=110)
         self.tree.column("port", width=60)
         self.tree.column("pm2", width=70)
         self.tree.column("cmd", width=70)
         self.tree.column("viewer", width=70)
-        self.tree.column("project", width=250)
+        self.tree.column("project", width=240)
 
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -187,7 +190,11 @@ class AgentManagerGUI:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
-    def _refresh_agents(self):
+    def _refresh_agents(self, preserve_selection: bool = False):
+        selected_ids = []
+        if preserve_selection:
+            selected_ids = [self.tree.item(item)["values"][0] for item in self.tree.selection()]
+
         # Clear tree
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -202,15 +209,13 @@ class AgentManagerGUI:
             view_state = "RUNNING" if is_pid_running(a.viewer_pid) else "STOPPED"
             browser_state = "With Browser" if a.use_browser else "Headless"
 
-            # Color based on status
-            tags = ()
-            if pm2_state == "ONLINE":
-                tags = ("online",)
-            else:
-                tags = ("offline",)
+            is_running = pm2_state == "ONLINE" or cmd_state == "RUNNING" or view_state == "RUNNING"
+            status_text = "Running" if is_running else "Stopped"
+            tag = "running" if is_running else "stopped"
 
             self.tree.insert("", tk.END, values=(
                 a.id,
+                status_text,
                 a.purpose,
                 browser_state,
                 a.port,
@@ -218,12 +223,22 @@ class AgentManagerGUI:
                 cmd_state,
                 view_state,
                 a.project_path
-            ), tags=tags)
+            ), tags=(tag,))
 
-        self.tree.tag_configure("online", foreground="#4ec9b0")
-        self.tree.tag_configure("offline", foreground="#f14c4c")
+        self.tree.tag_configure("running", foreground="#4ec9b0")
+        self.tree.tag_configure("stopped", foreground="#f14c4c")
+
+        if preserve_selection and selected_ids:
+            for item in self.tree.get_children():
+                values = self.tree.item(item)["values"]
+                if values and values[0] in selected_ids:
+                    self.tree.selection_add(item)
 
         self.status_var.set(f"Loaded {len(agents)} agents")
+
+    def _schedule_status_refresh(self) -> None:
+        self._refresh_agents(preserve_selection=True)
+        self.root.after(2000, self._schedule_status_refresh)
 
     def _launch_browser_view(self, agent_id: str, url: str, *, headless: bool) -> Optional[int]:
         """Open a viewer window and surface it inside the Tk app."""
