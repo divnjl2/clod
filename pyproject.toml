@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-agent-manager"
+version = "0.1.0"
+description = "Windows-first agent manager for Claude Code + claude-mem (per-agent ports, memory dirs, window tiling)."
+requires-python = ">=3.10"
+dependencies = [
+  "typer>=0.12.3",
+  "rich>=13.7.1",
+  "pydantic>=2.7.0",
+  "psutil>=6.0.0",
+]
+
+[project.scripts]
+cam = "claude_agent_manager.cli:app"
+
+[project.gui-scripts]
+cam-gui = "claude_agent_manager.gui:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
