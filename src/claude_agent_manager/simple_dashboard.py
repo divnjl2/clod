@@ -27,6 +27,10 @@ class Agent:
     def stop(self) -> None:
         self.running = False
 
+    def delete(self) -> None:
+        """Reset any runtime state before removal."""
+        self.stop()
+
 
 class AgentDashboard:
     """Minimalistic Tkinter dashboard for managing agents."""
@@ -160,6 +164,22 @@ class AgentDashboard:
         self.status_var.set("Agents stopped")
         self._render_agents()
 
+    def _start_agent(self, agent: Agent) -> None:
+        agent.start()
+        self.status_var.set(f"Started agent {agent.identifier}")
+        self._render_agents()
+
+    def _stop_agent(self, agent: Agent) -> None:
+        agent.stop()
+        self.status_var.set(f"Stopped agent {agent.identifier}")
+        self._render_agents()
+
+    def _delete_agent(self, agent: Agent) -> None:
+        agent.delete()
+        self.agents = [a for a in self.agents if a is not agent]
+        self.status_var.set(f"Deleted agent {agent.identifier}")
+        self._render_agents()
+
     def _sync_agent_count(self, *_: object) -> None:
         """Adjust the grid when the agent count slider changes."""
 
@@ -259,6 +279,47 @@ class AgentDashboard:
                 fg=self.fg_color,
                 font=("Segoe UI", 9),
             ).pack(pady=(4, 0))
+
+            button_row = tk.Frame(tile, bg=self.button_bg)
+            button_row.pack(pady=(8, 0))
+
+            start_state = tk.DISABLED if agent.running else tk.NORMAL
+            tk.Button(
+                button_row,
+                text="Start",
+                command=lambda a=agent: self._start_agent(a),
+                bg=self.button_bg,
+                fg=self.fg_color,
+                activebackground=self.accent_color,
+                activeforeground=self.fg_color,
+                relief=tk.FLAT,
+                width=8,
+                state=start_state,
+            ).grid(row=0, column=0, padx=2)
+
+            tk.Button(
+                button_row,
+                text="Stop",
+                command=lambda a=agent: self._stop_agent(a),
+                bg=self.button_bg,
+                fg=self.fg_color,
+                activebackground=self.accent_color,
+                activeforeground=self.fg_color,
+                relief=tk.FLAT,
+                width=8,
+            ).grid(row=0, column=1, padx=2)
+
+            tk.Button(
+                button_row,
+                text="Delete",
+                command=lambda a=agent: self._delete_agent(a),
+                bg=self.button_bg,
+                fg=self.fg_color,
+                activebackground="#a94442",
+                activeforeground=self.fg_color,
+                relief=tk.FLAT,
+                width=8,
+            ).grid(row=0, column=2, padx=2)
 
         for i in range(cols):
             self.grid_frame.columnconfigure(i, weight=1)
