@@ -16,6 +16,7 @@ class AgentRecord(BaseModel):
     pm2_name: str
     cmd_pid: Optional[int] = None
     viewer_pid: Optional[int] = None
+    use_browser: bool = True
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
 

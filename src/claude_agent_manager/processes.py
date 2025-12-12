@@ -82,7 +82,7 @@ def spawn_cmd_window(cmd_script: Path, workdir: Optional[str] = None) -> int:
     return p.pid
 
 
-def spawn_browser(url: str, browser: str, agent_id: Optional[str] = None) -> Optional[int]:
+def spawn_browser(url: str, browser: str, agent_id: Optional[str] = None, *, headless: bool = False) -> Optional[int]:
     """
     Spawn browser window for viewer.
     Each agent gets its own isolated browser profile via --user-data-dir.
@@ -111,6 +111,9 @@ def spawn_browser(url: str, browser: str, agent_id: Optional[str] = None) -> Opt
             "--disable-extensions",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-gpu",
+            "--enable-features=msEdgeHeadless",
+            *(["--headless=new"] if headless else []),
             f"--user-data-dir={profile_dir}",
         ])
         return p.pid
@@ -125,6 +128,8 @@ def spawn_browser(url: str, browser: str, agent_id: Optional[str] = None) -> Opt
             "--disable-extensions",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-gpu",
+            *(["--headless=new"] if headless else []),
             f"--user-data-dir={profile_dir}",
         ])
         return p.pid

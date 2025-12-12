@@ -223,7 +223,7 @@ def new(
     viewer_pid = None
     if start_browser:
         url = f"http://localhost:{port}"
-        viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent_id)
+        viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent_id, headless=True)
 
     # 3) claude cmd window (env MUST match worker)
     title = f"Agent {agent_id} @ {port} ({purpose})"
@@ -238,6 +238,7 @@ def new(
         pm2_name=pm2_name,
         cmd_pid=cmd_pid,
         viewer_pid=viewer_pid,
+        use_browser=start_browser,
     )
     save_agent(agent_root, rec)
     console.print(f"Created agent: {agent_id} (port={port})")
@@ -253,6 +254,7 @@ def list() -> None:
     table = Table(title="Claude Agents")
     table.add_column("id")
     table.add_column("purpose")
+    table.add_column("mode")
     table.add_column("port", justify="right")
     table.add_column("pm2")
     table.add_column("cmd")
@@ -263,7 +265,8 @@ def list() -> None:
         pm2_state = "ONLINE" if pm2_exists(a.pm2_name) else "OFFLINE"
         cmd_state = "RUNNING" if is_pid_running(a.cmd_pid) else "STOPPED"
         view_state = "RUNNING" if is_pid_running(a.viewer_pid) else "UNKNOWN/STOPPED"
-        table.add_row(a.id, a.purpose, str(a.port), pm2_state, cmd_state, view_state, a.project_path)
+        browser_state = "With Browser" if a.use_browser else "Headless"
+        table.add_row(a.id, a.purpose, browser_state, str(a.port), pm2_state, cmd_state, view_state, a.project_path)
 
     console.print(table)
 
@@ -277,8 +280,12 @@ def open_browser(
     agent_root = _agent_root(cfg)
     a = load_agent(agent_root, agent_id)
 
+    if not a.use_browser:
+        console.print(f"[yellow]Agent {agent_id} работает без браузера (headless).[/yellow]")
+        return
+
     url = f"http://localhost:{a.port}"
-    viewer_pid = spawn_browser(url, cfg.browser, agent_id=a.id)
+    viewer_pid = spawn_browser(url, cfg.browser, agent_id=a.id, headless=True)
 
     # Update agent record with new viewer PID
     updated = a.model_copy()
@@ -357,9 +364,11 @@ def open(
 
     updated = a.model_copy()
 
-    if reopen_viewer:
+    if reopen_viewer and a.use_browser:
         url = f"http://localhost:{a.port}"
-        updated.viewer_pid = spawn_browser(url, cfg.browser, agent_id=a.id)
+        updated.viewer_pid = spawn_browser(url, cfg.browser, agent_id=a.id, headless=True)
+    elif reopen_viewer and not a.use_browser:
+        console.print(f"[yellow]Agent {agent_id} is headless; viewer is not required.[/yellow]")
 
     if reopen_claude:
         title = f"Agent {a.id} @ {a.port} ({a.purpose})"

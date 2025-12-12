@@ -92,11 +92,12 @@ class AgentManagerGUI:
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # Treeview for agents
-        columns = ("id", "purpose", "port", "pm2", "cmd", "viewer", "project")
+        columns = ("id", "purpose", "mode", "port", "pm2", "cmd", "viewer", "project")
         self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=10)
 
         self.tree.heading("id", text="ID")
         self.tree.heading("purpose", text="Purpose")
+        self.tree.heading("mode", text="Mode")
         self.tree.heading("port", text="Port")
         self.tree.heading("pm2", text="PM2")
         self.tree.heading("cmd", text="CMD")
@@ -105,6 +106,7 @@ class AgentManagerGUI:
 
         self.tree.column("id", width=100)
         self.tree.column("purpose", width=100)
+        self.tree.column("mode", width=110)
         self.tree.column("port", width=60)
         self.tree.column("pm2", width=70)
         self.tree.column("cmd", width=70)
@@ -198,6 +200,7 @@ class AgentManagerGUI:
             pm2_state = "ONLINE" if pm2_exists(a.pm2_name) else "OFFLINE"
             cmd_state = "RUNNING" if is_pid_running(a.cmd_pid) else "STOPPED"
             view_state = "RUNNING" if is_pid_running(a.viewer_pid) else "STOPPED"
+            browser_state = "With Browser" if a.use_browser else "Headless"
 
             # Color based on status
             tags = ()
@@ -207,13 +210,68 @@ class AgentManagerGUI:
                 tags = ("offline",)
 
             self.tree.insert("", tk.END, values=(
-                a.id, a.purpose, a.port, pm2_state, cmd_state, view_state, a.project_path
+                a.id,
+                a.purpose,
+                browser_state,
+                a.port,
+                pm2_state,
+                cmd_state,
+                view_state,
+                a.project_path
             ), tags=tags)
 
         self.tree.tag_configure("online", foreground="#4ec9b0")
         self.tree.tag_configure("offline", foreground="#f14c4c")
 
         self.status_var.set(f"Loaded {len(agents)} agents")
+
+    def _launch_browser_view(self, agent_id: str, url: str, *, headless: bool) -> Optional[int]:
+        """Open a viewer window and surface it inside the Tk app."""
+        top = tk.Toplevel(self.root)
+        top.title(f"Viewer for {agent_id}")
+        top.configure(bg=self.bg_color)
+
+        mode_label = tk.Label(top, text="With Browser", bg=self.bg_color, fg=self.fg_color, font=("Segoe UI", 12, "bold"))
+        mode_label.pack(padx=10, pady=(10, 5))
+
+        tk.Label(
+            top,
+            text=f"Launching embedded browser view for {agent_id}\n{url}\n(Edge headless mode)",
+            bg=self.bg_color,
+            fg=self.fg_color,
+            justify=tk.LEFT,
+        ).pack(padx=10, pady=(0, 10))
+
+        viewer_pid = spawn_browser(url, self.cfg.browser, agent_id=agent_id, headless=headless)
+
+        status_text = "Browser process started" if viewer_pid else "Browser launched externally"
+        tk.Label(top, text=status_text, bg=self.bg_color, fg=self.accent_color).pack(padx=10, pady=(0, 10))
+
+        return viewer_pid
+
+    def _show_headless_info(self, agent_id: str, url: str) -> None:
+        """Show a textual summary for headless-only agents."""
+        top = tk.Toplevel(self.root)
+        top.title(f"Headless agent {agent_id}")
+        top.configure(bg=self.bg_color)
+
+        tk.Label(
+            top,
+            text="Headless",
+            bg=self.bg_color,
+            fg=self.fg_color,
+            font=("Segoe UI", 12, "bold"),
+        ).pack(padx=10, pady=(10, 5))
+
+        tk.Label(
+            top,
+            text=("Этому агенту не нужен браузер.\n"
+                  f"Порт сервера: {url}\n"
+                  "Вся работа выполняется в памяти."),
+            bg=self.bg_color,
+            fg=self.fg_color,
+            justify=tk.LEFT,
+        ).pack(padx=10, pady=(0, 10))
 
     def _create_agent(self):
         def do_create():
@@ -246,9 +304,12 @@ class AgentManagerGUI:
 
                 # Open browser if requested
                 viewer_pid = None
-                if self.browser_var.get():
-                    url = f"http://localhost:{port}"
-                    viewer_pid = spawn_browser(url, self.cfg.browser, agent_id=agent_id)
+                use_browser = self.browser_var.get()
+                url = f"http://localhost:{port}"
+                if use_browser:
+                    viewer_pid = self._launch_browser_view(agent_id, url, headless=True)
+                else:
+                    self._show_headless_info(agent_id, url)
 
                 # Create run.cmd and spawn claude window
                 run_cmd = agent_dir / "run.cmd"
@@ -274,6 +335,7 @@ class AgentManagerGUI:
                     pm2_name=pm2_name,
                     cmd_pid=cmd_pid,
                     viewer_pid=viewer_pid,
+                    use_browser=use_browser,
                 )
                 save_agent(agent_root, rec)
 
@@ -301,8 +363,12 @@ class AgentManagerGUI:
         agent = self._get_selected_agent()
         if agent:
             url = f"http://localhost:{agent.port}"
-            spawn_browser(url, self.cfg.browser, agent_id=agent.id)
-            self.status_var.set(f"Opened browser for {agent.id}")
+            if agent.use_browser:
+                self._launch_browser_view(agent.id, url, headless=True)
+                self.status_var.set(f"Opened browser for {agent.id}")
+            else:
+                self._show_headless_info(agent.id, url)
+                self.status_var.set(f"Agent {agent.id} is headless; browser not required")
 
     def _stop_selected(self):
         agent = self._get_selected_agent()
