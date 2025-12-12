@@ -732,6 +732,18 @@ class AgentDashboard:
         )
         self.count_lbl.pack(side=tk.LEFT, padx=(8, 0))
 
+        # Add button (same line as Agents/count)
+        self.add_btn = tk.Label(
+            left_frame, text="+",
+            font=("Segoe UI", 12),
+            bg=t["card_bg"], fg=t["accent"],
+            cursor="hand2"
+        )
+        self.add_btn.pack(side=tk.LEFT, padx=(12, 0))
+        self.add_btn.bind("<Button-1>", lambda e: self._create_agent())
+        self.add_btn.bind("<Enter>", lambda e: self.add_btn.configure(fg=self.theme["fg"]))
+        self.add_btn.bind("<Leave>", lambda e: self.add_btn.configure(fg=self.theme["accent"]))
+
         # Toggle (right side, vertically centered)
         self.theme_toggle = ToggleSwitch(
             self.header,
@@ -778,6 +790,7 @@ class AgentDashboard:
         self.left_frame.configure(bg=t["card_bg"])
         self.title_lbl.configure(bg=t["card_bg"], fg=t["fg"])
         self.count_lbl.configure(bg=t["card_bg"], fg=t["fg_dim"])
+        self.add_btn.configure(bg=t["card_bg"], fg=t["accent"])
         self.theme_toggle.set_bg(t["card_bg"])
         self.sep.configure(bg=t["separator"])
         self.agents_frame.configure(bg=t["card_bg"])
@@ -927,12 +940,128 @@ class AgentDashboard:
             self.agents_frame.columnconfigure(c, weight=1)
 
     def _create_agent(self):
-        """Open terminal to create agent."""
+        """Show themed dialog to create new agent."""
+        from tkinter import filedialog
         import subprocess
-        subprocess.Popen(
-            ["cmd.exe", "/k", "echo Run: cam new --purpose <name> --project <path> && echo."],
-            creationflags=0x00000010  # CREATE_NEW_CONSOLE
+
+        t = self.theme
+        dialog = tk.Toplevel(self.root)
+        dialog.title("New Agent")
+        dialog.configure(bg=t["bg"])
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center on parent
+        dialog.update_idletasks()
+        w, h = 340, 200
+        x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+
+        # Set title bar color
+        dialog.after(50, lambda: set_title_bar_color(dialog, self.is_dark))
+
+        # Main frame
+        frame = tk.Frame(dialog, bg=t["card_bg"], padx=20, pady=16)
+        frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        # Title
+        tk.Label(
+            frame, text="Create New Agent",
+            font=("Segoe UI Semibold", 12),
+            bg=t["card_bg"], fg=t["fg"]
+        ).pack(anchor="w")
+
+        # Purpose input
+        tk.Label(
+            frame, text="Purpose",
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(12, 2))
+
+        purpose_var = tk.StringVar()
+        purpose_entry = tk.Entry(
+            frame, textvariable=purpose_var,
+            font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat", bd=0
         )
+        purpose_entry.pack(fill=tk.X, ipady=6)
+        purpose_entry.focus_set()
+
+        # Project path
+        tk.Label(
+            frame, text="Project Directory",
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(12, 2))
+
+        path_frame = tk.Frame(frame, bg=t["card_bg"])
+        path_frame.pack(fill=tk.X)
+
+        path_var = tk.StringVar()
+        path_entry = tk.Entry(
+            path_frame, textvariable=path_var,
+            font=("Segoe UI", 9),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat", bd=0
+        )
+        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5)
+
+        def browse():
+            p = filedialog.askdirectory(parent=dialog)
+            if p:
+                path_var.set(p)
+
+        browse_btn = tk.Label(
+            path_frame, text="...",
+            font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            cursor="hand2", padx=10
+        )
+        browse_btn.pack(side=tk.RIGHT, ipady=5)
+        browse_btn.bind("<Button-1>", lambda e: browse())
+
+        # Buttons
+        btn_frame = tk.Frame(frame, bg=t["card_bg"])
+        btn_frame.pack(fill=tk.X, pady=(16, 0))
+
+        def on_create():
+            purpose = purpose_var.get().strip()
+            project = path_var.get().strip()
+            if not purpose or not project:
+                return
+            dialog.destroy()
+
+            cmd = f'cam new --purpose "{purpose}" --project "{project}"'
+            subprocess.Popen(
+                ["cmd.exe", "/k", cmd],
+                creationflags=0x00000010
+            )
+            self.root.after(2000, self._load_agents)
+
+        cancel_btn = AnimatedButton(
+            btn_frame, text="Cancel",
+            command=dialog.destroy,
+            theme=t, style="default",
+            font_size=9, padx=16, pady=4
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=(8, 0))
+
+        create_btn = AnimatedButton(
+            btn_frame, text="Create",
+            command=on_create,
+            theme=t, style="primary",
+            font_size=9, padx=16, pady=4
+        )
+        create_btn.pack(side=tk.RIGHT)
+
+        # Enter key to create
+        dialog.bind("<Return>", lambda e: on_create())
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
 
     def _show_settings(self, agent_data: Dict):
         callbacks = {
