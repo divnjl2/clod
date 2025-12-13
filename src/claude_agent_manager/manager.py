@@ -77,10 +77,13 @@ def _write_run_cmd(
                 f"set ALL_PROXY={proxy_url}\n"
             )
 
+    # Escape special chars in title for cmd
+    safe_title = title.replace("|", "^|").replace("&", "^&")
+
     content = (
         "@echo off\n"
         "chcp 65001 >nul 2>&1\n"
-        f"title {title}\n"
+        f"title {safe_title}\n"
         f"set CLAUDE_MEM_WORKER_PORT={port}\n"
         f"set CLAUDE_MEM_DATA_DIR={data_dir}\n"
         f"{proxy_lines}"
