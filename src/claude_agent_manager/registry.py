@@ -8,6 +8,27 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class ProxyConfig(BaseModel):
+    """Proxy configuration for agent."""
+    enabled: bool = False
+    type: str = "http"  # http, https, socks5
+    host: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+    def to_url(self) -> Optional[str]:
+        """Build proxy URL string."""
+        if not self.enabled or not self.host or not self.port:
+            return None
+        auth = ""
+        if self.username and self.password:
+            auth = f"{self.username}:{self.password}@"
+        elif self.username:
+            auth = f"{self.username}@"
+        return f"{self.type}://{auth}{self.host}:{self.port}"
+
+
 class AgentRecord(BaseModel):
     id: str
     purpose: str
@@ -16,7 +37,8 @@ class AgentRecord(BaseModel):
     pm2_name: str
     cmd_pid: Optional[int] = None
     viewer_pid: Optional[int] = None
-    use_browser: bool = True
+    use_browser: bool = False
+    proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
 

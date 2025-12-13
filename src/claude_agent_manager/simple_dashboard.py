@@ -511,7 +511,6 @@ class AgentSettingsPanel(tk.Frame):
         actions = [
             ("🧠  Memory Viewer", "memory"),
             ("🔄  Restart Memory", "restart_memory"),
-            ("🌐  Open Browser", "browser"),
             ("🔒  Proxy Settings", "proxy"),
             ("📋  View Logs", "logs"),
             ("🗑  Delete", "delete"),
@@ -888,6 +887,7 @@ class AgentDashboard:
                         "use_browser": agent.use_browser,
                         "cmd_running": getattr(agent, 'cmd_running', False),
                         "viewer_running": getattr(agent, 'viewer_running', False),
+                        "proxy": getattr(agent, 'proxy', None) or {},
                     })
             except Exception as e:
                 print(f"Fetch agents error: {e}")
@@ -1217,7 +1217,6 @@ class AgentDashboard:
         callbacks = {
             "memory": self._open_memory_viewer,
             "restart_memory": self._restart_memory,
-            "browser": self._open_browser,
             "proxy": self._configure_proxy,
             "logs": self._view_logs,
             "delete": self._delete_agent,
@@ -1313,11 +1312,206 @@ class AgentDashboard:
                 print(f"Restart error: {e}")
         self.root.after(500, self._load_agents)
 
-    def _open_browser(self, agent: Dict):
-        self._open_memory_viewer(agent)
-
     def _configure_proxy(self, agent: Dict):
-        print(f"Configure proxy for {agent['id']}")
+        """Show proxy settings dialog for agent."""
+        try:
+            self._show_proxy_dialog(agent)
+        except Exception as e:
+            print(f"Proxy dialog error: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _show_proxy_dialog(self, agent: Dict):
+        """Internal proxy dialog."""
+        t = self.theme
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Proxy Settings")
+        dialog.configure(bg=t["card_bg"])
+        dialog.geometry("320x360")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center on parent
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 320) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 360) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # Get current proxy config
+        proxy_data = agent.get("proxy", {})
+        enabled = proxy_data.get("enabled", False)
+        proxy_type = proxy_data.get("type", "http")
+        host = proxy_data.get("host", "")
+        port = proxy_data.get("port", "")
+        username = proxy_data.get("username", "")
+        password = proxy_data.get("password", "")
+
+        # Form
+        form = tk.Frame(dialog, bg=t["card_bg"])
+        form.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+
+        # Enable toggle row
+        enable_frame = tk.Frame(form, bg=t["card_bg"])
+        enable_frame.pack(fill=tk.X, pady=(0, 12))
+
+        enabled_var = tk.BooleanVar(value=enabled)
+        tk.Label(
+            enable_frame, text="Enable Proxy",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg"]
+        ).pack(side=tk.LEFT)
+
+        # Simple toggle indicator
+        toggle_lbl = tk.Label(
+            enable_frame,
+            text="ON" if enabled else "OFF",
+            font=("Segoe UI", 8),
+            bg=t["accent"] if enabled else t["btn_bg"],
+            fg="#fff" if enabled else t["fg_dim"],
+            padx=8, pady=2, cursor="hand2"
+        )
+        toggle_lbl.pack(side=tk.RIGHT)
+
+        def toggle_proxy():
+            new_val = not enabled_var.get()
+            enabled_var.set(new_val)
+            toggle_lbl.configure(
+                text="ON" if new_val else "OFF",
+                bg=t["accent"] if new_val else t["btn_bg"],
+                fg="#fff" if new_val else t["fg_dim"]
+            )
+        toggle_lbl.bind("<Button-1>", lambda e: toggle_proxy())
+
+        # Type
+        tk.Label(
+            form, text="Type", font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 2))
+
+        type_var = tk.StringVar(value=proxy_type)
+        type_frame = tk.Frame(form, bg=t["btn_bg"])
+        type_frame.pack(fill=tk.X, pady=(0, 8))
+
+        for ptype in ["http", "https", "socks5"]:
+            btn = tk.Label(
+                type_frame, text=ptype.upper(),
+                font=("Segoe UI", 8),
+                bg=t["accent"] if proxy_type == ptype else t["btn_bg"],
+                fg="#fff" if proxy_type == ptype else t["fg"],
+                padx=10, pady=4, cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 1))
+
+            def select_type(p=ptype, b=btn):
+                type_var.set(p)
+                for child in type_frame.winfo_children():
+                    child.configure(bg=t["btn_bg"], fg=t["fg"])
+                b.configure(bg=t["accent"], fg="#fff")
+
+            btn.bind("<Button-1>", lambda e, p=ptype, b=btn: select_type(p, b))
+
+        # Host
+        tk.Label(
+            form, text="Host", font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 2))
+
+        host_entry = tk.Entry(
+            form, font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"], relief="flat", bd=0
+        )
+        host_entry.insert(0, host or "")
+        host_entry.pack(fill=tk.X, ipady=6, pady=(0, 8))
+
+        # Port
+        tk.Label(
+            form, text="Port", font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 2))
+
+        port_entry = tk.Entry(
+            form, font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"], relief="flat", bd=0
+        )
+        port_entry.insert(0, str(port) if port else "")
+        port_entry.pack(fill=tk.X, ipady=6, pady=(0, 8))
+
+        # Auth section (collapsible feel)
+        auth_header = tk.Frame(form, bg=t["card_bg"])
+        auth_header.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(
+            auth_header, text="Authentication (optional)",
+            font=("Segoe UI", 8), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(side=tk.LEFT)
+
+        # Username & Password in row
+        auth_frame = tk.Frame(form, bg=t["card_bg"])
+        auth_frame.pack(fill=tk.X)
+
+        user_entry = tk.Entry(
+            auth_frame, font=("Segoe UI", 9),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"], relief="flat", bd=0, width=14
+        )
+        user_entry.insert(0, username or "")
+        user_entry.pack(side=tk.LEFT, ipady=5, padx=(0, 4), expand=True, fill=tk.X)
+
+        pass_entry = tk.Entry(
+            auth_frame, font=("Segoe UI", 9),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"], relief="flat", bd=0, width=14, show="•"
+        )
+        pass_entry.insert(0, password or "")
+        pass_entry.pack(side=tk.LEFT, ipady=5, expand=True, fill=tk.X)
+
+        # Hint
+        tk.Label(
+            form, text="Applies on agent restart",
+            font=("Segoe UI", 7), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(pady=(8, 0))
+
+        # Buttons
+        btn_frame = tk.Frame(dialog, bg=t["card_bg"])
+        btn_frame.pack(fill=tk.X, padx=16, pady=(0, 16))
+
+        def on_save():
+            from .registry import ProxyConfig
+            port_val = port_entry.get().strip()
+            new_proxy = ProxyConfig(
+                enabled=enabled_var.get(),
+                type=type_var.get(),
+                host=host_entry.get().strip() or None,
+                port=int(port_val) if port_val.isdigit() else None,
+                username=user_entry.get().strip() or None,
+                password=pass_entry.get().strip() or None,
+            )
+            if HAS_BACKEND:
+                try:
+                    manager.update_proxy(agent["id"], new_proxy)
+                except Exception as e:
+                    print(f"Proxy update error: {e}")
+            dialog.destroy()
+            self._load_agents()
+
+        save_btn = AnimatedButton(
+            btn_frame, text="Save",
+            command=on_save,
+            theme=t, style="primary",
+            font_size=9, padx=20, pady=6
+        )
+        save_btn.pack(side=tk.RIGHT)
+
+        cancel_btn = AnimatedButton(
+            btn_frame, text="Cancel",
+            command=dialog.destroy,
+            theme=t, style="secondary",
+            font_size=9, padx=16, pady=6
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=(0, 8))
+
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
 
     def _view_logs(self, agent: Dict):
         if HAS_BACKEND:

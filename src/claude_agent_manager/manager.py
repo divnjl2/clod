@@ -26,7 +26,7 @@ from .processes import (
     spawn_cmd_window,
     which,
 )
-from .registry import AgentRecord, iter_agents, load_agent, save_agent
+from .registry import AgentRecord, ProxyConfig, iter_agents, load_agent, save_agent
 from .worker import pick_port, start_worker
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,7 @@ class AgentStatus:
     viewer_running: bool
     use_browser: bool
     project_path: str
+    proxy: Optional[dict] = None  # Proxy config as dict for serialization
 
 
 def get_agent_root(cfg: Optional[AppConfig] = None) -> Path:
@@ -54,15 +55,35 @@ def get_agent_root(cfg: Optional[AppConfig] = None) -> Path:
     return p
 
 
-def _write_run_cmd(agent_dir: Path, title: str, port: int, data_dir: Path, project_path: Path) -> Path:
+def _write_run_cmd(
+    agent_dir: Path,
+    title: str,
+    port: int,
+    data_dir: Path,
+    project_path: Path,
+    proxy: Optional[ProxyConfig] = None
+) -> Path:
     """Write the run.cmd script for an agent."""
     run_cmd = agent_dir / "run.cmd"
+
+    # Build proxy env vars if enabled
+    proxy_lines = ""
+    if proxy and proxy.enabled:
+        proxy_url = proxy.to_url()
+        if proxy_url:
+            proxy_lines = (
+                f"set HTTP_PROXY={proxy_url}\n"
+                f"set HTTPS_PROXY={proxy_url}\n"
+                f"set ALL_PROXY={proxy_url}\n"
+            )
+
     content = (
         "@echo off\n"
         "chcp 65001 >nul 2>&1\n"
         f"title {title}\n"
         f"set CLAUDE_MEM_WORKER_PORT={port}\n"
         f"set CLAUDE_MEM_DATA_DIR={data_dir}\n"
+        f"{proxy_lines}"
         f"cd /d \"{project_path}\"\n"
         "claude\n"
     )
@@ -87,6 +108,7 @@ def create_agent(
     agent_id: Optional[str] = None,
     port: Optional[int] = None,
     use_browser: bool = False,
+    proxy: Optional[ProxyConfig] = None,
     cfg: Optional[AppConfig] = None,
 ) -> AgentRecord:
     """
@@ -98,6 +120,7 @@ def create_agent(
         agent_id: Optional custom agent ID
         port: Optional custom port (will auto-pick if not provided)
         use_browser: Whether to open browser viewer
+        proxy: Optional proxy configuration
         cfg: Optional config (will load default if not provided)
 
     Returns:
@@ -133,7 +156,11 @@ def create_agent(
     if not project.exists():
         raise FileNotFoundError(f"Project path not found: {project}")
 
-    logger.info(f"[AGENT] create_agent | id={agent_id} port={port} purpose={purpose}")
+    # Default proxy config if not provided
+    if proxy is None:
+        proxy = ProxyConfig()
+
+    logger.info(f"[AGENT] create_agent | id={agent_id} port={port} purpose={purpose} proxy={proxy.enabled}")
 
     # 1) Start worker (pm2)
     start_worker(cfg, pm2_name=pm2_name, port=port, data_dir=agent_dir)
@@ -146,7 +173,7 @@ def create_agent(
 
     # 3) Start claude cmd window
     title = f"{purpose} | :{port}"
-    run_cmd = _write_run_cmd(agent_dir, title=title, port=port, data_dir=agent_dir, project_path=project)
+    run_cmd = _write_run_cmd(agent_dir, title=title, port=port, data_dir=agent_dir, project_path=project, proxy=proxy)
     cmd_pid = spawn_cmd_window(run_cmd, workdir=str(project))
 
     # Save agent record
@@ -159,6 +186,7 @@ def create_agent(
         cmd_pid=cmd_pid,
         viewer_pid=viewer_pid,
         use_browser=use_browser,
+        proxy=proxy,
     )
     save_agent(agent_root, rec)
 
@@ -200,10 +228,12 @@ def start_agent(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
     cmd_pid = agent.cmd_pid
     if not is_pid_running(cmd_pid):
         title = f"{agent.purpose} | :{agent.port}"
-        run_cmd = agent_dir / "run.cmd"
-        if not run_cmd.exists():
-            run_cmd = _write_run_cmd(agent_dir, title=title, port=agent.port,
-                                      data_dir=agent_dir, project_path=Path(agent.project_path))
+        # Always regenerate run.cmd to apply latest proxy settings
+        run_cmd = _write_run_cmd(
+            agent_dir, title=title, port=agent.port,
+            data_dir=agent_dir, project_path=Path(agent.project_path),
+            proxy=agent.proxy
+        )
         cmd_pid = spawn_cmd_window(run_cmd, workdir=agent.project_path)
 
     # Update record
@@ -258,6 +288,9 @@ def open_viewer(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
     """
     Open browser viewer for an agent.
 
+    Opens browser regardless of use_browser setting - this is an explicit user action.
+    The use_browser flag only controls auto-open on agent start.
+
     Args:
         agent_id: The agent ID
         cfg: Optional config
@@ -271,12 +304,9 @@ def open_viewer(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
     agent_root = get_agent_root(cfg)
     agent = load_agent(agent_root, agent_id)
 
-    if not agent.use_browser:
-        logger.warning(f"[AGENT] open_viewer | id={agent_id} - agent is headless")
-        return agent
-
     url = f"http://localhost:{agent.port}"
-    viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent.id, headless=True)
+    # Open in visible mode (not headless) since user explicitly requested viewer
+    viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent.id, headless=False)
 
     updated = agent.model_copy()
     updated.viewer_pid = viewer_pid
@@ -311,6 +341,34 @@ def close_viewer(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
     updated.viewer_pid = None
     save_agent(agent_root, updated)
 
+    return updated
+
+
+def update_proxy(agent_id: str, proxy: ProxyConfig, cfg: Optional[AppConfig] = None) -> AgentRecord:
+    """
+    Update proxy settings for an agent.
+
+    The new settings will apply on next agent restart.
+
+    Args:
+        agent_id: The agent ID
+        proxy: New proxy configuration
+        cfg: Optional config
+
+    Returns:
+        Updated AgentRecord
+    """
+    if cfg is None:
+        cfg = load_config()
+
+    agent_root = get_agent_root(cfg)
+    agent = load_agent(agent_root, agent_id)
+
+    updated = agent.model_copy()
+    updated.proxy = proxy
+    save_agent(agent_root, updated)
+
+    logger.info(f"[AGENT] update_proxy | id={agent_id} enabled={proxy.enabled} type={proxy.type}")
     return updated
 
 
@@ -367,6 +425,7 @@ def list_agents(cfg: Optional[AppConfig] = None) -> List[AgentStatus]:
             viewer_running=is_pid_running(agent.viewer_pid),
             use_browser=agent.use_browser,
             project_path=agent.project_path,
+            proxy=agent.proxy.model_dump() if agent.proxy else None,
         ))
 
     return result
