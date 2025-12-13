@@ -90,7 +90,14 @@ def pm2_status(name: str) -> Optional[dict]:
     if res.returncode != 0:
         return None
     try:
-        processes = json.loads(res.stdout)
+        # PM2 may output warnings before JSON, find the JSON array
+        stdout = res.stdout
+        json_start = stdout.find('[')
+        if json_start == -1:
+            return None
+        stdout = stdout[json_start:]
+
+        processes = json.loads(stdout)
         for proc in processes:
             if proc.get("name") == name:
                 return {

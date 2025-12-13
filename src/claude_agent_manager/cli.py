@@ -226,7 +226,7 @@ def new(
         viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent_id, headless=True)
 
     # 3) claude cmd window (env MUST match worker)
-    title = f"Agent {agent_id} @ {port} ({purpose})"
+    title = f"{purpose} | :{port}"
     run_cmd = _write_run_cmd(agent_dir, title=title, port=port, data_dir=agent_dir, project_path=project_path)
     cmd_pid = spawn_cmd_window(run_cmd, workdir=str(project_path))
 
@@ -371,7 +371,7 @@ def open(
         console.print(f"[yellow]Agent {agent_id} is headless; viewer is not required.[/yellow]")
 
     if reopen_claude:
-        title = f"Agent {a.id} @ {a.port} ({a.purpose})"
+        title = f"{a.purpose} | :{a.port}"
         run_cmd = agent_dir / "run.cmd"
         if not run_cmd.exists():
             run_cmd = _write_run_cmd(agent_dir, title=title, port=a.port, data_dir=agent_dir, project_path=Path(a.project_path))

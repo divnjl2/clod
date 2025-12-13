@@ -6,15 +6,39 @@ Compact card-based UI with smooth animations, theme toggle and agent settings.
 from __future__ import annotations
 
 import ctypes
+import os
+import sys
 import tkinter as tk
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Callable
 
-# Import real agent registry if available
+
+def get_app_data_dir() -> Path:
+    """Get platform-specific app data directory."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        return base / "ClaudeAgentManager"
+    elif sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "ClaudeAgentManager"
+    else:  # Linux and others
+        return Path.home() / ".local" / "share" / "claude-agent-manager"
+
+
+def ensure_app_dirs() -> Path:
+    """Create app directory structure if not exists."""
+    app_dir = get_app_data_dir()
+
+    # Create directory structure
+    (app_dir / "config" / "templates").mkdir(parents=True, exist_ok=True)
+    (app_dir / "agents").mkdir(parents=True, exist_ok=True)
+
+    return app_dir
+
+# Import real agent manager if available
 try:
-    from .registry import iter_agents, AgentRecord, load_agent, save_agent
+    from . import manager
     from .config import load_config
-    from .processes import pm2_stop, pm2_start_worker, pm2_status, spawn_browser, spawn_cmd, pm2_restart
+    from .processes import pm2_status, pm2_restart
     HAS_BACKEND = True
 except ImportError:
     HAS_BACKEND = False
@@ -588,9 +612,17 @@ class AgentCard(tk.Frame):
         self.purpose_lbl = tk.Label(self.left, text=purpose, font=("Segoe UI", 8), bg=t["card_bg"], fg=t["fg_dim"])
         self.purpose_lbl.pack(anchor="w", pady=(1, 0))
 
-        # Port
-        self.port_lbl = tk.Label(self.left, text=f":{agent['port']}", font=("Consolas", 7), bg=t["card_bg"], fg=t["fg_dim"])
-        self.port_lbl.pack(anchor="w")
+        # Port + Memory indicator
+        info_frame = tk.Frame(self.left, bg=t["card_bg"])
+        info_frame.pack(anchor="w")
+
+        self.port_lbl = tk.Label(info_frame, text=f":{agent['port']}", font=("Consolas", 7), bg=t["card_bg"], fg=t["fg_dim"])
+        self.port_lbl.pack(side=tk.LEFT)
+
+        # Memory indicator (worker status)
+        mem_color = t["online"] if status == "online" else t["fg_dim"]
+        self.mem_lbl = tk.Label(info_frame, text=" ● mem", font=("Consolas", 7), bg=t["card_bg"], fg=mem_color)
+        self.mem_lbl.pack(side=tk.LEFT, padx=(4, 0))
 
         # Toggle button
         btn_style = "stop" if status == "online" else "start"
@@ -609,7 +641,7 @@ class AgentCard(tk.Frame):
         )
         self.toggle_btn.pack(side=tk.RIGHT, padx=(6, 0))
 
-        self._widgets = [self.content, self.left, self.top, self.id_lbl, self.purpose_lbl, self.port_lbl]
+        self._widgets = [self.content, self.left, self.top, self.id_lbl, self.purpose_lbl, info_frame, self.port_lbl, self.mem_lbl]
 
     def _bind_events(self):
         for w in self._widgets:
@@ -837,36 +869,31 @@ class AgentDashboard:
         return True
 
     def _fetch_agents_data(self) -> List[Dict]:
-        """Fetch current agents data."""
+        """Fetch current agents data using manager."""
         data = []
+
         if HAS_BACKEND:
             try:
-                cfg = load_config()
-                agent_root = Path(cfg.agent_root)
-                agents = iter_agents(agent_root)
-
+                # Use manager to get agents with status
+                agents = manager.list_agents()
                 for agent in agents:
-                    status = "offline"
-                    try:
-                        info = pm2_status(agent.pm2_name)
-                        if info and info.get("status") == "online":
-                            status = "online"
-                    except:
-                        pass
-
+                    status = "online" if agent.worker_online else "offline"
                     data.append({
                         "id": agent.id,
                         "purpose": agent.purpose,
                         "port": agent.port,
                         "status": status,
-                        "pm2_name": agent.pm2_name,
+                        "pm2_name": f"agent-{agent.id}",
                         "project_path": agent.project_path,
                         "use_browser": agent.use_browser,
+                        "cmd_running": getattr(agent, 'cmd_running', False),
+                        "viewer_running": getattr(agent, 'viewer_running', False),
                     })
-            except:
-                data = self._get_demo_data()
-        else:
-            data = self._get_demo_data()
+            except Exception as e:
+                print(f"Fetch agents error: {e}")
+                import traceback
+                traceback.print_exc()
+
         return data
 
     def _load_agents(self):
@@ -875,12 +902,150 @@ class AgentDashboard:
         self._render()
 
     def _get_demo_data(self) -> List[Dict]:
-        return [
-            {"id": "kyc-proc-01", "purpose": "KYC Processing", "port": 37701, "status": "online", "pm2_name": "kyc-01", "use_browser": True},
-            {"id": "order-mgr-02", "purpose": "Order Management", "port": 37702, "status": "offline", "pm2_name": "order-02", "use_browser": True},
-            {"id": "pay-gate-03", "purpose": "Payment Gateway", "port": 37703, "status": "online", "pm2_name": "pay-03", "use_browser": False},
-            {"id": "support-04", "purpose": "User Support", "port": 37704, "status": "offline", "pm2_name": "support-04", "use_browser": True},
-        ]
+        # No demo data - show empty state for first launch
+        return []
+
+    def _render_welcome_form(self):
+        """Render inline welcome form for first agent creation."""
+        from tkinter import filedialog
+        t = self.theme
+
+        # Main container
+        form_frame = tk.Frame(self.agents_frame, bg=t["card_bg"])
+        form_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+
+        # Top section with logo
+        top = tk.Frame(form_frame, bg=t["card_bg"])
+        top.pack(fill=tk.X)
+
+        # Welcome icon - use app logo
+        icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
+        if icon_path.exists():
+            try:
+                self._welcome_icon = tk.PhotoImage(file=str(icon_path))
+                factor = max(1, self._welcome_icon.width() // 80)
+                self._welcome_icon = self._welcome_icon.subsample(factor, factor)
+                tk.Label(
+                    top, image=self._welcome_icon,
+                    bg=t["card_bg"], borderwidth=0
+                ).pack(pady=(0, 8))
+            except:
+                pass
+
+        tk.Label(
+            top, text="Create your first agent",
+            font=("Segoe UI Semibold", 12),
+            bg=t["card_bg"], fg=t["fg"]
+        ).pack(pady=(0, 4))
+
+        tk.Label(
+            top, text="Fill in the details below to get started",
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(pady=(0, 16))
+
+        # Form fields
+        fields_frame = tk.Frame(form_frame, bg=t["card_bg"])
+        fields_frame.pack(fill=tk.X)
+
+        # Purpose
+        tk.Label(
+            fields_frame, text="Purpose",
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 2))
+
+        self._welcome_purpose = tk.StringVar()
+        purpose_entry = tk.Entry(
+            fields_frame, textvariable=self._welcome_purpose,
+            font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat", bd=0
+        )
+        purpose_entry.pack(fill=tk.X, ipady=8)
+        purpose_entry.focus_set()
+
+        # Project path
+        tk.Label(
+            fields_frame, text="Project Directory",
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(12, 2))
+
+        path_frame = tk.Frame(fields_frame, bg=t["card_bg"])
+        path_frame.pack(fill=tk.X)
+
+        self._welcome_path = tk.StringVar()
+        path_entry = tk.Entry(
+            path_frame, textvariable=self._welcome_path,
+            font=("Segoe UI", 9),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat", bd=0
+        )
+        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=7)
+
+        def browse():
+            p = filedialog.askdirectory(parent=self.root)
+            if p:
+                self._welcome_path.set(p)
+
+        browse_btn = tk.Label(
+            path_frame, text="...",
+            font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            cursor="hand2", padx=12
+        )
+        browse_btn.pack(side=tk.RIGHT, ipady=7)
+        browse_btn.bind("<Button-1>", lambda e: browse())
+        browse_btn.bind("<Enter>", lambda e: browse_btn.configure(bg=t["btn_hover"]))
+        browse_btn.bind("<Leave>", lambda e: browse_btn.configure(bg=t["btn_bg"]))
+
+        # Create button
+        btn_frame = tk.Frame(form_frame, bg=t["card_bg"])
+        btn_frame.pack(fill=tk.X, pady=(20, 0))
+
+        def on_create():
+            purpose = self._welcome_purpose.get().strip()
+            project = self._welcome_path.get().strip()
+            if not purpose or not project:
+                return
+
+            if HAS_BACKEND:
+                try:
+                    # Create without browser by default (can open later via settings)
+                    manager.create_agent(
+                        purpose=purpose,
+                        project_path=project,
+                        use_browser=False,
+                    )
+                except Exception as e:
+                    print(f"Create agent error: {e}")
+                    return
+
+            # Delay refresh to let pm2 start (2.5s should be enough)
+            self.root.after(2500, self._load_agents)
+
+        create_btn = AnimatedButton(
+            btn_frame, text="Create Agent",
+            command=on_create,
+            theme=t, style="primary",
+            font_size=10, padx=24, pady=8
+        )
+        create_btn.pack()
+
+        # Bind Enter key
+        purpose_entry.bind("<Return>", lambda e: path_entry.focus_set())
+        path_entry.bind("<Return>", lambda e: on_create())
+
+        # Data path hint at bottom
+        tk.Label(
+            form_frame,
+            text=f"Data: {get_app_data_dir()}",
+            font=("Consolas", 7),
+            bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(side=tk.BOTTOM, pady=(16, 0))
 
     def _render(self):
         t = self.theme
@@ -895,29 +1060,8 @@ class AgentDashboard:
         self.count_lbl.configure(text=f"{count}")
 
         if not self.agents_data:
-            # No agents - show create button
-            empty_frame = tk.Frame(self.agents_frame, bg=t["card_bg"])
-            empty_frame.pack(expand=True, pady=20)
-
-            tk.Label(
-                empty_frame,
-                text="No agents yet",
-                font=("Segoe UI", 10),
-                bg=t["card_bg"],
-                fg=t["fg_dim"]
-            ).pack(pady=(0, 8))
-
-            create_btn = AnimatedButton(
-                empty_frame,
-                text="+ Create Agent",
-                command=self._create_agent,
-                theme=t,
-                style="primary",
-                font_size=10,
-                padx=16,
-                pady=6
-            )
-            create_btn.pack()
+            # No agents - show inline creation form
+            self._render_welcome_form()
             return
 
         # Render cards
@@ -1036,12 +1180,18 @@ class AgentDashboard:
                 return
             dialog.destroy()
 
-            cmd = f'cam new --purpose "{purpose}" --project "{project}"'
-            subprocess.Popen(
-                ["cmd.exe", "/k", cmd],
-                creationflags=0x00000010
-            )
-            self.root.after(2000, self._load_agents)
+            if HAS_BACKEND:
+                try:
+                    # Create without browser by default
+                    manager.create_agent(
+                        purpose=purpose,
+                        project_path=project,
+                        use_browser=False,
+                    )
+                except Exception as e:
+                    print(f"Create agent error: {e}")
+
+            self.root.after(1500, self._load_agents)
 
         cancel_btn = AnimatedButton(
             btn_frame, text="Cancel",
@@ -1121,17 +1271,7 @@ class AgentDashboard:
             return
 
         try:
-            cfg = load_config()
-            agent_root = Path(cfg.agent_root)
-            agent = load_agent(agent_root, agent_id)
-
-            from .worker import start_worker
-            data_dir = agent_root / agent_id / "data"
-            start_worker(cfg, agent.pm2_name, agent.port, data_dir)
-            spawn_cmd(agent.project_path, agent.port)
-
-            if agent.use_browser:
-                spawn_browser(f"http://localhost:{agent.port}", cfg.browser, agent_id)
+            manager.start_agent(agent_id)
         except Exception as e:
             print(f"Start error: {e}")
 
@@ -1146,10 +1286,7 @@ class AgentDashboard:
             return
 
         try:
-            cfg = load_config()
-            agent_root = Path(cfg.agent_root)
-            agent = load_agent(agent_root, agent_id)
-            pm2_stop(agent.pm2_name)
+            manager.stop_agent(agent_id)
         except Exception as e:
             print(f"Stop error: {e}")
 
@@ -1157,17 +1294,16 @@ class AgentDashboard:
 
     # Settings actions
     def _open_memory_viewer(self, agent: Dict):
-        url = f"http://localhost:{agent['port']}"
         if HAS_BACKEND:
             try:
-                cfg = load_config()
-                spawn_browser(url, cfg.browser, agent["id"])
-            except:
+                manager.open_viewer(agent["id"])
+            except Exception as e:
+                print(f"Open viewer error: {e}")
                 import webbrowser
-                webbrowser.open(url)
+                webbrowser.open(f"http://localhost:{agent['port']}")
         else:
             import webbrowser
-            webbrowser.open(url)
+            webbrowser.open(f"http://localhost:{agent['port']}")
 
     def _restart_memory(self, agent: Dict):
         if HAS_BACKEND:
@@ -1197,13 +1333,7 @@ class AgentDashboard:
     def _delete_agent(self, agent: Dict):
         if HAS_BACKEND:
             try:
-                cfg = load_config()
-                agent_root = Path(cfg.agent_root)
-                pm2_stop(agent["pm2_name"])
-                import shutil
-                agent_dir = agent_root / agent["id"]
-                if agent_dir.exists():
-                    shutil.rmtree(agent_dir)
+                manager.delete_agent(agent["id"])
             except Exception as e:
                 print(f"Delete error: {e}")
         self._close_settings()
@@ -1215,6 +1345,9 @@ class AgentDashboard:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def launch_dashboard() -> None:
+    # Ensure app directories exist
+    ensure_app_dirs()
+
     root = tk.Tk()
 
     # Set app icon
