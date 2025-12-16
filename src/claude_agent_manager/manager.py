@@ -27,7 +27,14 @@ from .processes import (
     which,
 )
 from .registry import AgentConfigOptions, AgentRecord, ProxyConfig, iter_agents, load_agent, save_agent
-from .agent_config import apply_agent_config, get_agent_env_vars, build_env_lines
+from .agent_config import (
+    apply_agent_config,
+    get_agent_env_vars,
+    build_env_lines,
+    sync_agent_config_to_project,
+    write_agent_local_claude_md,
+    write_agent_local_mcp_json,
+)
 from .worker import pick_port, start_worker
 
 logger = logging.getLogger(__name__)
@@ -187,9 +194,14 @@ def create_agent(
 
     logger.info(f"[AGENT] create_agent | id={agent_id} port={port} purpose={purpose} proxy={proxy.enabled}")
 
-    # 0) Apply agent config files to project (CLAUDE.md, .mcp.json, etc.) if configured
-    if config.system_prompt or config.mcp_servers or config.claude_settings:
-        apply_agent_config(project, purpose, agent_id, port, config)
+    # 0) Save agent config files to agent_dir (per-agent isolation)
+    if config.system_prompt:
+        write_agent_local_claude_md(agent_dir, config.system_prompt)
+    if config.mcp_servers:
+        write_agent_local_mcp_json(agent_dir, {"mcpServers": config.mcp_servers})
+
+    # 0.1) Sync config files from agent_dir to project
+    sync_agent_config_to_project(agent_dir, project)
 
     # 1) Start worker (pm2)
     start_worker(cfg, pm2_name=pm2_name, port=port, data_dir=agent_dir)
@@ -243,6 +255,12 @@ def start_agent(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
     agent_dir = agent_root / agent_id
 
     logger.info(f"[AGENT] start_agent | id={agent_id}")
+
+    # Sync agent-local config files to project (CLAUDE.md, .mcp.json)
+    project_path = Path(agent.project_path)
+    synced = sync_agent_config_to_project(agent_dir, project_path)
+    if synced:
+        logger.info(f"[AGENT] start_agent | synced config files: {list(synced.keys())}")
 
     # Ensure worker is running
     if not pm2_exists(agent.pm2_name):

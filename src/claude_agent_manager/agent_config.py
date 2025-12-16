@@ -461,3 +461,129 @@ def read_agent_config(project_path: Path) -> dict:
         "has_mcp_json": get_mcp_json_path(project_path).exists(),
         "has_claude_settings": get_claude_settings_path(project_path).exists()
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PER-AGENT CONFIG STORAGE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_agent_claude_md_path(agent_dir: Path) -> Path:
+    """Get path to CLAUDE.md in agent directory."""
+    return agent_dir / "CLAUDE.md"
+
+
+def get_agent_mcp_json_path(agent_dir: Path) -> Path:
+    """Get path to .mcp.json in agent directory."""
+    return agent_dir / ".mcp.json"
+
+
+def read_agent_local_config(agent_dir: Path) -> dict:
+    """
+    Read agent-local configuration files.
+
+    Args:
+        agent_dir: Agent directory (e.g., ~/.agents/1234-37758/)
+
+    Returns:
+        Dict with config data from agent directory
+    """
+    claude_md_path = get_agent_claude_md_path(agent_dir)
+    mcp_json_path = get_agent_mcp_json_path(agent_dir)
+
+    claude_md = None
+    if claude_md_path.exists():
+        try:
+            claude_md = claude_md_path.read_text(encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"[AGENT_CONFIG] read_agent_local_config claude_md failed | error={e}")
+
+    mcp_json = None
+    if mcp_json_path.exists():
+        try:
+            mcp_json = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"[AGENT_CONFIG] read_agent_local_config mcp_json failed | error={e}")
+
+    return {
+        "claude_md": claude_md,
+        "mcp_json": mcp_json,
+        "has_claude_md": claude_md_path.exists(),
+        "has_mcp_json": mcp_json_path.exists()
+    }
+
+
+def write_agent_local_claude_md(agent_dir: Path, content: str) -> Path:
+    """
+    Write CLAUDE.md to agent directory.
+
+    Args:
+        agent_dir: Agent directory
+        content: System prompt content
+
+    Returns:
+        Path to created file
+    """
+    path = get_agent_claude_md_path(agent_dir)
+    path.write_text(content, encoding="utf-8")
+    logger.info(f"[AGENT_CONFIG] write_agent_local_claude_md | path={path} size={len(content)}")
+    return path
+
+
+def write_agent_local_mcp_json(agent_dir: Path, config: dict) -> Path:
+    """
+    Write .mcp.json to agent directory.
+
+    Args:
+        agent_dir: Agent directory
+        config: MCP configuration dict
+
+    Returns:
+        Path to created file
+    """
+    path = get_agent_mcp_json_path(agent_dir)
+    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    logger.info(f"[AGENT_CONFIG] write_agent_local_mcp_json | path={path} servers={list(config.get('mcpServers', {}).keys())}")
+    return path
+
+
+def sync_agent_config_to_project(agent_dir: Path, project_path: Path) -> dict:
+    """
+    Copy agent-local config files to project directory.
+
+    This allows per-agent isolation: each agent has its own CLAUDE.md and .mcp.json
+    stored in agent_dir, which gets copied to project_path on agent start.
+
+    Args:
+        agent_dir: Agent directory with config files
+        project_path: Project directory to copy to
+
+    Returns:
+        Dict of synced files
+    """
+    synced = {}
+
+    # Sync CLAUDE.md
+    agent_claude_md = get_agent_claude_md_path(agent_dir)
+    if agent_claude_md.exists():
+        try:
+            content = agent_claude_md.read_text(encoding="utf-8")
+            project_claude_md = get_claude_md_path(project_path)
+            project_claude_md.write_text(content, encoding="utf-8")
+            synced["claude_md"] = project_claude_md
+            logger.info(f"[AGENT_CONFIG] sync_agent_config_to_project | CLAUDE.md synced to {project_claude_md}")
+        except Exception as e:
+            logger.error(f"[AGENT_CONFIG] sync CLAUDE.md failed | error={e}")
+
+    # Sync .mcp.json
+    agent_mcp_json = get_agent_mcp_json_path(agent_dir)
+    if agent_mcp_json.exists():
+        try:
+            content = agent_mcp_json.read_text(encoding="utf-8")
+            project_mcp_json = get_mcp_json_path(project_path)
+            project_mcp_json.write_text(content, encoding="utf-8")
+            synced["mcp_json"] = project_mcp_json
+            logger.info(f"[AGENT_CONFIG] sync_agent_config_to_project | .mcp.json synced to {project_mcp_json}")
+        except Exception as e:
+            logger.error(f"[AGENT_CONFIG] sync .mcp.json failed | error={e}")
+
+    return synced

@@ -46,6 +46,7 @@ except ImportError:
     HAS_BACKEND = False
     ac = None
     AgentConfigOptions = None
+    manager = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -593,13 +594,29 @@ class AgentConfigDialog:
         self.on_save = on_save
         self.project_path = Path(agent_data["project_path"])
 
+        # Get agent_dir from manager
+        self.agent_dir = None
+        if HAS_BACKEND and manager:
+            try:
+                agent_root = manager.get_agent_root()
+                self.agent_dir = agent_root / agent_data["id"]
+            except Exception:
+                pass
+
         # Load current config
         self._load_current_config()
         self._create_dialog()
 
     def _load_current_config(self):
-        """Load current configuration from project."""
-        if ac:
+        """Load current configuration from agent directory (per-agent isolation)."""
+        if ac and self.agent_dir and self.agent_dir.exists():
+            # Read from agent_dir (per-agent config)
+            config = ac.read_agent_local_config(self.agent_dir)
+            self.current_prompt = config.get("claude_md") or ""
+            self.current_mcp = config.get("mcp_json") or {}
+            self.current_settings = {}
+        elif ac:
+            # Fallback to project_path
             config = ac.read_agent_config(self.project_path)
             self.current_prompt = config.get("claude_md") or ""
             self.current_mcp = config.get("mcp_json") or {}
@@ -898,15 +915,18 @@ class AgentConfigDialog:
         ).pack(anchor="w", pady=(16, 0))
 
     def _on_save(self):
-        """Save all configuration."""
+        """Save all configuration to agent directory (per-agent isolation)."""
         import json
 
-        # 1. Save System Prompt (CLAUDE.md)
-        prompt_content = self.prompt_text.get("1.0", tk.END).strip()
-        if prompt_content and ac:
-            ac.write_claude_md(self.project_path, prompt_content)
+        # Determine save location (agent_dir for per-agent isolation)
+        save_dir = self.agent_dir if self.agent_dir else self.project_path
 
-        # 2. Save MCP configuration
+        # 1. Save System Prompt (CLAUDE.md) to agent_dir
+        prompt_content = self.prompt_text.get("1.0", tk.END).strip()
+        if prompt_content and ac and self.agent_dir:
+            ac.write_agent_local_claude_md(self.agent_dir, prompt_content)
+
+        # 2. Save MCP configuration to agent_dir
         mcp_servers = {}
 
         # Add selected preset servers
@@ -923,10 +943,14 @@ class AgentConfigDialog:
             except json.JSONDecodeError:
                 pass  # Invalid JSON, skip
 
-        if mcp_servers and ac:
-            ac.write_mcp_json(self.project_path, {"mcpServers": mcp_servers})
+        if mcp_servers and ac and self.agent_dir:
+            ac.write_agent_local_mcp_json(self.agent_dir, {"mcpServers": mcp_servers})
 
-        # 3. Build AgentConfigOptions for env vars
+        # 3. Sync config to project immediately
+        if ac and self.agent_dir:
+            ac.sync_agent_config_to_project(self.agent_dir, self.project_path)
+
+        # 4. Build AgentConfigOptions for env vars
         max_tokens_str = self.max_tokens_entry.get().strip()
         bash_timeout_str = self.bash_timeout_entry.get().strip()
 
