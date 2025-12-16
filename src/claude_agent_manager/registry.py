@@ -29,6 +29,18 @@ class ProxyConfig(BaseModel):
         return f"{self.type}://{auth}{self.host}:{self.port}"
 
 
+class AgentConfigOptions(BaseModel):
+    """Configuration options for Claude Code agent."""
+    system_prompt: Optional[str] = None
+    mcp_servers: Optional[dict] = None
+    claude_settings: Optional[dict] = None
+    disable_autoupdate: bool = False
+    max_output_tokens: Optional[int] = None
+    bash_timeout_ms: Optional[int] = None
+    disable_telemetry: bool = False
+    custom_env_vars: dict = Field(default_factory=dict)
+
+
 class AgentRecord(BaseModel):
     id: str
     purpose: str
@@ -39,6 +51,7 @@ class AgentRecord(BaseModel):
     viewer_pid: Optional[int] = None
     use_browser: bool = False
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
+    config: AgentConfigOptions = Field(default_factory=AgentConfigOptions)
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
 

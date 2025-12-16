@@ -26,7 +26,8 @@ from .processes import (
     spawn_cmd_window,
     which,
 )
-from .registry import AgentRecord, ProxyConfig, iter_agents, load_agent, save_agent
+from .registry import AgentConfigOptions, AgentRecord, ProxyConfig, iter_agents, load_agent, save_agent
+from .agent_config import apply_agent_config, get_agent_env_vars, build_env_lines
 from .worker import pick_port, start_worker
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,8 @@ def _write_run_cmd(
     port: int,
     data_dir: Path,
     project_path: Path,
-    proxy: Optional[ProxyConfig] = None
+    proxy: Optional[ProxyConfig] = None,
+    config: Optional[AgentConfigOptions] = None
 ) -> Path:
     """Write the run.cmd script for an agent."""
     run_cmd = agent_dir / "run.cmd"
@@ -77,6 +79,19 @@ def _write_run_cmd(
                 f"set ALL_PROXY={proxy_url}\n"
             )
 
+    # Build config env vars
+    config_lines = ""
+    if config:
+        env_vars = get_agent_env_vars(
+            disable_autoupdate=config.disable_autoupdate,
+            max_output_tokens=config.max_output_tokens,
+            bash_timeout_ms=config.bash_timeout_ms,
+            disable_telemetry=config.disable_telemetry,
+            custom_vars=config.custom_env_vars
+        )
+        if env_vars:
+            config_lines = build_env_lines(env_vars) + "\n"
+
     # Escape special chars in title for cmd
     safe_title = title.replace("|", "^|").replace("&", "^&")
 
@@ -87,6 +102,7 @@ def _write_run_cmd(
         f"set CLAUDE_MEM_WORKER_PORT={port}\n"
         f"set CLAUDE_MEM_DATA_DIR={data_dir}\n"
         f"{proxy_lines}"
+        f"{config_lines}"
         f"cd /d \"{project_path}\"\n"
         "claude\n"
     )
@@ -112,6 +128,7 @@ def create_agent(
     port: Optional[int] = None,
     use_browser: bool = False,
     proxy: Optional[ProxyConfig] = None,
+    config: Optional[AgentConfigOptions] = None,
     cfg: Optional[AppConfig] = None,
 ) -> AgentRecord:
     """
@@ -124,6 +141,7 @@ def create_agent(
         port: Optional custom port (will auto-pick if not provided)
         use_browser: Whether to open browser viewer
         proxy: Optional proxy configuration
+        config: Optional Claude Code configuration options
         cfg: Optional config (will load default if not provided)
 
     Returns:
@@ -163,7 +181,15 @@ def create_agent(
     if proxy is None:
         proxy = ProxyConfig()
 
+    # Default config options if not provided
+    if config is None:
+        config = AgentConfigOptions()
+
     logger.info(f"[AGENT] create_agent | id={agent_id} port={port} purpose={purpose} proxy={proxy.enabled}")
+
+    # 0) Apply agent config files to project (CLAUDE.md, .mcp.json, etc.) if configured
+    if config.system_prompt or config.mcp_servers or config.claude_settings:
+        apply_agent_config(project, purpose, agent_id, port, config)
 
     # 1) Start worker (pm2)
     start_worker(cfg, pm2_name=pm2_name, port=port, data_dir=agent_dir)
@@ -176,7 +202,7 @@ def create_agent(
 
     # 3) Start claude cmd window
     title = f"{purpose} | :{port}"
-    run_cmd = _write_run_cmd(agent_dir, title=title, port=port, data_dir=agent_dir, project_path=project, proxy=proxy)
+    run_cmd = _write_run_cmd(agent_dir, title=title, port=port, data_dir=agent_dir, project_path=project, proxy=proxy, config=config)
     cmd_pid = spawn_cmd_window(run_cmd, workdir=str(project))
 
     # Save agent record
@@ -190,6 +216,7 @@ def create_agent(
         viewer_pid=viewer_pid,
         use_browser=use_browser,
         proxy=proxy,
+        config=config,
     )
     save_agent(agent_root, rec)
 
@@ -231,11 +258,11 @@ def start_agent(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
     cmd_pid = agent.cmd_pid
     if not is_pid_running(cmd_pid):
         title = f"{agent.purpose} | :{agent.port}"
-        # Always regenerate run.cmd to apply latest proxy settings
+        # Always regenerate run.cmd to apply latest proxy/config settings
         run_cmd = _write_run_cmd(
             agent_dir, title=title, port=agent.port,
             data_dir=agent_dir, project_path=Path(agent.project_path),
-            proxy=agent.proxy
+            proxy=agent.proxy, config=agent.config
         )
         cmd_pid = spawn_cmd_window(run_cmd, workdir=agent.project_path)
 
