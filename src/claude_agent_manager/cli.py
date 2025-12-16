@@ -29,6 +29,25 @@ app = typer.Typer(no_args_is_help=True)
 console = Console()
 
 
+def _dpi_awareness() -> None:
+    """
+    Включает DPI awareness для текущего процесса на Windows.
+    Сначала пытается использовать Per-Monitor V2, если не получилось — откатывается на SetProcessDPIAware.
+    Тихо игнорирует ошибки на не-Windows.
+    """
+    try:
+        import ctypes
+        # Per-Monitor V2 (Windows 10 1703+)
+        awareness = ctypes.c_int()
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE_V2
+    except (AttributeError, OSError):
+        try:
+            import ctypes
+            ctypes.windll.user32.SetProcessDPIAware()
+        except (AttributeError, OSError):
+            pass  # Not Windows or old version
+
+
 def _agent_root(cfg: AppConfig) -> Path:
     p = Path(cfg.agent_root)
     p.mkdir(parents=True, exist_ok=True)
@@ -386,6 +405,8 @@ def tile(
     count: int = typer.Option(4, "--count"),
 ) -> None:
     """Раскладка окон последних N агентов (2x2)."""
+    _dpi_awareness()
+
     import ctypes
     from ctypes import wintypes
 

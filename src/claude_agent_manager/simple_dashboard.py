@@ -795,6 +795,21 @@ class AgentDashboard:
         self.agents_frame.pack(fill=tk.BOTH, expand=True)
         self.agents_frame.grid_propagate(False)
 
+        # Footer with settings gear (bottom right, same vertical as toggle)
+        self.footer = tk.Frame(self.card, bg=t["card_bg"])
+        self.footer.pack(fill=tk.X, pady=(4, 0))
+
+        self.settings_btn = tk.Label(
+            self.footer, text="☰",
+            font=("Segoe UI", 10),
+            bg=t["card_bg"], fg=t["fg_dim"],
+            cursor="hand2"
+        )
+        self.settings_btn.pack(side=tk.RIGHT)
+        self.settings_btn.bind("<Button-1>", lambda e: self._show_app_settings())
+        self.settings_btn.bind("<Enter>", lambda e: self.settings_btn.configure(fg=self.theme["fg"]))
+        self.settings_btn.bind("<Leave>", lambda e: self.settings_btn.configure(fg=self.theme["fg_dim"]))
+
         # Settings panel (hidden) - disable propagation
         self.settings_panel = AgentSettingsPanel(
             self.main, theme=t, on_close=self._close_settings
@@ -808,6 +823,152 @@ class AgentDashboard:
         # Apply all changes, let Tk batch them naturally
         self._apply_theme()
         self.root.after_idle(lambda: set_title_bar_color(self.root, is_dark))
+
+    def _show_app_settings(self):
+        """Show application settings dialog."""
+        from . import settings as app_settings
+
+        t = self.theme
+        current = app_settings.get_settings(reload=True)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Settings")
+        dialog.configure(bg=t["card_bg"])
+        dialog.geometry("340x280")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 340) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 280) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # Form
+        form = tk.Frame(dialog, bg=t["card_bg"])
+        form.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+
+        # Tiler engine
+        tk.Label(
+            form, text="Tiler Engine", font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 2))
+
+        tiler_var = tk.StringVar(value=current.tiler_engine)
+        tiler_frame = tk.Frame(form, bg=t["btn_bg"])
+        tiler_frame.pack(fill=tk.X, pady=(0, 10))
+
+        for engine in ["builtin", "komorebi"]:
+            btn = tk.Label(
+                tiler_frame, text=engine.title(),
+                font=("Segoe UI", 8),
+                bg=t["accent"] if current.tiler_engine == engine else t["btn_bg"],
+                fg="#fff" if current.tiler_engine == engine else t["fg"],
+                padx=12, pady=4, cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 1))
+
+            def select_tiler(e=engine, b=btn):
+                tiler_var.set(e)
+                for child in tiler_frame.winfo_children():
+                    child.configure(bg=t["btn_bg"], fg=t["fg"])
+                b.configure(bg=t["accent"], fg="#fff")
+
+            btn.bind("<Button-1>", lambda e, eng=engine, b=btn: select_tiler(eng, b))
+
+        # Tile layout
+        tk.Label(
+            form, text="Tile Layout", font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 2))
+
+        layout_var = tk.StringVar(value=current.tile_layout)
+        layout_frame = tk.Frame(form, bg=t["btn_bg"])
+        layout_frame.pack(fill=tk.X, pady=(0, 10))
+
+        for layout in ["grid", "grid_split", "viewer_only"]:
+            btn = tk.Label(
+                layout_frame, text=layout.replace("_", " ").title(),
+                font=("Segoe UI", 8),
+                bg=t["accent"] if current.tile_layout == layout else t["btn_bg"],
+                fg="#fff" if current.tile_layout == layout else t["fg"],
+                padx=8, pady=4, cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 1))
+
+            def select_layout(ly=layout, b=btn):
+                layout_var.set(ly)
+                for child in layout_frame.winfo_children():
+                    child.configure(bg=t["btn_bg"], fg=t["fg"])
+                b.configure(bg=t["accent"], fg="#fff")
+
+            btn.bind("<Button-1>", lambda e, ly=layout, b=btn: select_layout(ly, b))
+
+        # Auto-tile checkboxes
+        auto_start_var = tk.BooleanVar(value=current.auto_tile_on_start)
+        tk.Checkbutton(
+            form, text="Auto-tile on start", variable=auto_start_var,
+            bg=t["card_bg"], fg=t["fg"], selectcolor=t["btn_bg"],
+            activebackground=t["card_bg"], activeforeground=t["fg"]
+        ).pack(anchor="w", pady=2)
+
+        auto_change_var = tk.BooleanVar(value=current.auto_tile_on_change)
+        tk.Checkbutton(
+            form, text="Auto-tile on agent change", variable=auto_change_var,
+            bg=t["card_bg"], fg=t["fg"], selectcolor=t["btn_bg"],
+            activebackground=t["card_bg"], activeforeground=t["fg"]
+        ).pack(anchor="w", pady=2)
+
+        # Poll interval
+        tk.Label(
+            form, text="Poll Interval (ms)", font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(8, 2))
+
+        poll_entry = tk.Entry(
+            form, font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"], relief="flat", bd=0, width=8
+        )
+        poll_entry.insert(0, str(current.poll_interval_ms))
+        poll_entry.pack(anchor="w", ipady=4)
+
+        # Buttons
+        btn_frame = tk.Frame(dialog, bg=t["card_bg"])
+        btn_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
+
+        def on_save():
+            poll_val = poll_entry.get().strip()
+            new_settings = app_settings.AppSettings(
+                theme="dark" if self.is_dark else "light",
+                tiler_engine=tiler_var.get(),
+                tile_layout=layout_var.get(),
+                auto_tile_on_start=auto_start_var.get(),
+                auto_tile_on_change=auto_change_var.get(),
+                poll_interval_ms=int(poll_val) if poll_val.isdigit() else 1500,
+            )
+            app_settings.save_settings(new_settings)
+            app_settings.invalidate_cache()
+            dialog.destroy()
+
+        save_btn = AnimatedButton(
+            btn_frame, text="Save",
+            command=on_save,
+            theme=t, style="primary",
+            font_size=9, padx=20, pady=6
+        )
+        save_btn.pack(side=tk.RIGHT)
+
+        cancel_btn = AnimatedButton(
+            btn_frame, text="Cancel",
+            command=dialog.destroy,
+            theme=t, style="default",
+            font_size=9, padx=16, pady=6
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=(0, 8))
+
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
 
     def _apply_theme(self):
         """Apply theme colors to all widgets without re-rendering."""
@@ -823,6 +984,8 @@ class AgentDashboard:
         self.count_lbl.configure(bg=t["card_bg"], fg=t["fg_dim"])
         self.add_btn.configure(bg=t["card_bg"], fg=t["accent"])
         self.theme_toggle.set_bg(t["card_bg"])
+        self.footer.configure(bg=t["card_bg"])
+        self.settings_btn.configure(bg=t["card_bg"], fg=t["fg_dim"])
         self.sep.configure(bg=t["separator"])
         self.agents_frame.configure(bg=t["card_bg"])
 
