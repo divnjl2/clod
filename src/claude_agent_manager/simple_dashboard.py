@@ -39,9 +39,13 @@ try:
     from . import manager
     from .config import load_config
     from .processes import pm2_status, pm2_restart
+    from . import agent_config as ac
+    from .registry import AgentConfigOptions
     HAS_BACKEND = True
 except ImportError:
     HAS_BACKEND = False
+    ac = None
+    AgentConfigOptions = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -509,6 +513,7 @@ class AgentSettingsPanel(tk.Frame):
 
         # Create action buttons with emoji
         actions = [
+            ("⚙️  Configure Claude", "configure"),
             ("🧠  Memory Viewer", "memory"),
             ("🔄  Restart Memory", "restart_memory"),
             ("🔒  Proxy Settings", "proxy"),
@@ -552,6 +557,395 @@ class AgentSettingsPanel(tk.Frame):
         # Update action buttons
         for btn in self.action_buttons:
             btn.update_theme(t)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AGENT CONFIGURATION DIALOG
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AgentConfigDialog:
+    """Dialog for configuring Claude Code agent settings."""
+
+    # Predefined MCP servers
+    MCP_PRESETS = {
+        "sequential-thinking": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@anthropic/sequential-thinking-server"]
+        },
+        "filesystem": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@anthropic/filesystem-server"]
+        },
+        "github": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@anthropic/github-server"],
+            "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": ""}
+        },
+    }
+
+    def __init__(self, root: tk.Tk, agent_data: Dict, theme: Dict, on_save: Callable):
+        self.root = root
+        self.agent_data = agent_data
+        self.theme = theme
+        self.on_save = on_save
+        self.project_path = Path(agent_data["project_path"])
+
+        # Load current config
+        self._load_current_config()
+        self._create_dialog()
+
+    def _load_current_config(self):
+        """Load current configuration from project."""
+        if ac:
+            config = ac.read_agent_config(self.project_path)
+            self.current_prompt = config.get("claude_md") or ""
+            self.current_mcp = config.get("mcp_json") or {}
+            self.current_settings = config.get("claude_settings") or {}
+        else:
+            self.current_prompt = ""
+            self.current_mcp = {}
+            self.current_settings = {}
+
+    def _create_dialog(self):
+        t = self.theme
+        self.dialog = tk.Toplevel(self.root)
+        self.dialog.title(f"Configure: {self.agent_data['id'][:12]}")
+        self.dialog.configure(bg=t["bg"])
+        self.dialog.geometry("520x480")
+        self.dialog.resizable(True, True)
+        self.dialog.transient(self.root)
+        self.dialog.grab_set()
+
+        # Center
+        self.dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 520) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 480) // 2
+        self.dialog.geometry(f"+{x}+{y}")
+
+        # Set title bar color
+        self.dialog.after(50, lambda: set_title_bar_color(self.dialog, t == THEMES["dark"]))
+
+        # Main frame
+        main = tk.Frame(self.dialog, bg=t["card_bg"])
+        main.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        # Tab buttons
+        self.tab_frame = tk.Frame(main, bg=t["card_bg"])
+        self.tab_frame.pack(fill=tk.X, padx=12, pady=(8, 0))
+
+        self.tabs = ["System Prompt", "MCP Servers", "Settings"]
+        self.tab_buttons = []
+        self.current_tab = 0
+
+        for i, tab_name in enumerate(self.tabs):
+            btn = tk.Label(
+                self.tab_frame, text=tab_name,
+                font=("Segoe UI", 9),
+                bg=t["accent"] if i == 0 else t["btn_bg"],
+                fg="#fff" if i == 0 else t["fg"],
+                padx=12, pady=6, cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 2))
+            btn.bind("<Button-1>", lambda e, idx=i: self._switch_tab(idx))
+            self.tab_buttons.append(btn)
+
+        # Content area
+        self.content = tk.Frame(main, bg=t["card_bg"])
+        self.content.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+
+        # Build all tab contents
+        self._build_prompt_tab()
+        self._build_mcp_tab()
+        self._build_settings_tab()
+
+        # Show first tab
+        self._show_tab(0)
+
+        # Buttons at bottom
+        btn_frame = tk.Frame(main, bg=t["card_bg"])
+        btn_frame.pack(fill=tk.X, padx=12, pady=(0, 12))
+
+        save_btn = AnimatedButton(
+            btn_frame, text="Save & Apply",
+            command=self._on_save,
+            theme=t, style="primary",
+            font_size=9, padx=20, pady=6
+        )
+        save_btn.pack(side=tk.RIGHT)
+
+        cancel_btn = AnimatedButton(
+            btn_frame, text="Cancel",
+            command=self.dialog.destroy,
+            theme=t, style="default",
+            font_size=9, padx=16, pady=6
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=(0, 8))
+
+        self.dialog.bind("<Escape>", lambda e: self.dialog.destroy())
+
+    def _switch_tab(self, idx: int):
+        t = self.theme
+        self.current_tab = idx
+
+        # Update tab button appearance
+        for i, btn in enumerate(self.tab_buttons):
+            if i == idx:
+                btn.configure(bg=t["accent"], fg="#fff")
+            else:
+                btn.configure(bg=t["btn_bg"], fg=t["fg"])
+
+        self._show_tab(idx)
+
+    def _show_tab(self, idx: int):
+        # Hide all tab frames
+        self.prompt_frame.pack_forget()
+        self.mcp_frame.pack_forget()
+        self.settings_frame.pack_forget()
+
+        # Show selected tab
+        if idx == 0:
+            self.prompt_frame.pack(fill=tk.BOTH, expand=True)
+        elif idx == 1:
+            self.mcp_frame.pack(fill=tk.BOTH, expand=True)
+        else:
+            self.settings_frame.pack(fill=tk.BOTH, expand=True)
+
+    def _build_prompt_tab(self):
+        """Build System Prompt tab."""
+        t = self.theme
+        self.prompt_frame = tk.Frame(self.content, bg=t["card_bg"])
+
+        # Label
+        tk.Label(
+            self.prompt_frame, text="CLAUDE.md (System Prompt)",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(0, 4))
+
+        # Text area with scrollbar
+        text_frame = tk.Frame(self.prompt_frame, bg=t["btn_bg"])
+        text_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.prompt_text = tk.Text(
+            text_frame,
+            font=("Consolas", 9),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat", bd=0,
+            wrap=tk.WORD,
+            padx=8, pady=8
+        )
+        self.prompt_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(text_frame, command=self.prompt_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.prompt_text.config(yscrollcommand=scrollbar.set)
+
+        # Insert current content
+        self.prompt_text.insert("1.0", self.current_prompt)
+
+        # Hint
+        tk.Label(
+            self.prompt_frame,
+            text="This file provides context and instructions to Claude Code",
+            font=("Segoe UI", 7), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(4, 0))
+
+    def _build_mcp_tab(self):
+        """Build MCP Servers tab."""
+        t = self.theme
+        self.mcp_frame = tk.Frame(self.content, bg=t["card_bg"])
+
+        # Label
+        tk.Label(
+            self.mcp_frame, text="MCP Servers (.mcp.json)",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(0, 4))
+
+        # Current servers
+        servers = self.current_mcp.get("mcpServers", {})
+        self.mcp_vars = {}
+
+        servers_frame = tk.Frame(self.mcp_frame, bg=t["card_bg"])
+        servers_frame.pack(fill=tk.X, pady=(0, 8))
+
+        # Checkboxes for preset servers
+        for name in self.MCP_PRESETS.keys():
+            var = tk.BooleanVar(value=name in servers)
+            self.mcp_vars[name] = var
+
+            cb = tk.Checkbutton(
+                servers_frame, text=name,
+                variable=var,
+                font=("Segoe UI", 9),
+                bg=t["card_bg"], fg=t["fg"],
+                selectcolor=t["btn_bg"],
+                activebackground=t["card_bg"],
+                activeforeground=t["fg"]
+            )
+            cb.pack(anchor="w", pady=1)
+
+        # Custom servers section
+        tk.Label(
+            self.mcp_frame, text="Custom Servers (JSON)",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(8, 4))
+
+        # Filter out preset servers from current config for custom display
+        custom_servers = {k: v for k, v in servers.items() if k not in self.MCP_PRESETS}
+
+        custom_frame = tk.Frame(self.mcp_frame, bg=t["btn_bg"])
+        custom_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.custom_mcp_text = tk.Text(
+            custom_frame,
+            font=("Consolas", 8),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat", bd=0,
+            height=6, wrap=tk.WORD,
+            padx=8, pady=8
+        )
+        self.custom_mcp_text.pack(fill=tk.BOTH, expand=True)
+
+        import json
+        if custom_servers:
+            self.custom_mcp_text.insert("1.0", json.dumps(custom_servers, indent=2))
+
+        # Hint
+        tk.Label(
+            self.mcp_frame,
+            text="Add custom MCP servers as JSON: {\"name\": {\"type\": \"stdio\", ...}}",
+            font=("Segoe UI", 7), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(4, 0))
+
+    def _build_settings_tab(self):
+        """Build Claude Settings tab."""
+        t = self.theme
+        self.settings_frame = tk.Frame(self.content, bg=t["card_bg"])
+
+        # Environment variables section
+        tk.Label(
+            self.settings_frame, text="Environment Variables",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(0, 4))
+
+        # Disable auto-update
+        self.disable_autoupdate_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            self.settings_frame, text="Disable auto-update",
+            variable=self.disable_autoupdate_var,
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg"],
+            selectcolor=t["btn_bg"],
+            activebackground=t["card_bg"],
+            activeforeground=t["fg"]
+        ).pack(anchor="w", pady=1)
+
+        # Disable telemetry
+        self.disable_telemetry_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            self.settings_frame, text="Disable telemetry",
+            variable=self.disable_telemetry_var,
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg"],
+            selectcolor=t["btn_bg"],
+            activebackground=t["card_bg"],
+            activeforeground=t["fg"]
+        ).pack(anchor="w", pady=1)
+
+        # Max output tokens
+        tokens_frame = tk.Frame(self.settings_frame, bg=t["card_bg"])
+        tokens_frame.pack(fill=tk.X, pady=(12, 0))
+
+        tk.Label(
+            tokens_frame, text="Max Output Tokens",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(side=tk.LEFT)
+
+        self.max_tokens_entry = tk.Entry(
+            tokens_frame, font=("Segoe UI", 9),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat", bd=0, width=10
+        )
+        self.max_tokens_entry.pack(side=tk.LEFT, padx=(8, 0), ipady=4)
+
+        # Bash timeout
+        timeout_frame = tk.Frame(self.settings_frame, bg=t["card_bg"])
+        timeout_frame.pack(fill=tk.X, pady=(8, 0))
+
+        tk.Label(
+            timeout_frame, text="Bash Timeout (ms)",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(side=tk.LEFT)
+
+        self.bash_timeout_entry = tk.Entry(
+            timeout_frame, font=("Segoe UI", 9),
+            bg=t["btn_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat", bd=0, width=10
+        )
+        self.bash_timeout_entry.pack(side=tk.LEFT, padx=(8, 0), ipady=4)
+
+        # Hint
+        tk.Label(
+            self.settings_frame,
+            text="Settings are applied via environment variables in run.cmd",
+            font=("Segoe UI", 7), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(16, 0))
+
+    def _on_save(self):
+        """Save all configuration."""
+        import json
+
+        # 1. Save System Prompt (CLAUDE.md)
+        prompt_content = self.prompt_text.get("1.0", tk.END).strip()
+        if prompt_content and ac:
+            ac.write_claude_md(self.project_path, prompt_content)
+
+        # 2. Save MCP configuration
+        mcp_servers = {}
+
+        # Add selected preset servers
+        for name, var in self.mcp_vars.items():
+            if var.get():
+                mcp_servers[name] = self.MCP_PRESETS[name]
+
+        # Add custom servers
+        custom_text = self.custom_mcp_text.get("1.0", tk.END).strip()
+        if custom_text:
+            try:
+                custom_servers = json.loads(custom_text)
+                mcp_servers.update(custom_servers)
+            except json.JSONDecodeError:
+                pass  # Invalid JSON, skip
+
+        if mcp_servers and ac:
+            ac.write_mcp_json(self.project_path, {"mcpServers": mcp_servers})
+
+        # 3. Build AgentConfigOptions for env vars
+        max_tokens_str = self.max_tokens_entry.get().strip()
+        bash_timeout_str = self.bash_timeout_entry.get().strip()
+
+        config_options = None
+        if AgentConfigOptions:
+            config_options = AgentConfigOptions(
+                system_prompt=prompt_content if prompt_content else None,
+                mcp_servers=mcp_servers if mcp_servers else None,
+                disable_autoupdate=self.disable_autoupdate_var.get(),
+                disable_telemetry=self.disable_telemetry_var.get(),
+                max_output_tokens=int(max_tokens_str) if max_tokens_str.isdigit() else None,
+                bash_timeout_ms=int(bash_timeout_str) if bash_timeout_str.isdigit() else None,
+            )
+
+        # Call save callback
+        if self.on_save:
+            self.on_save(self.agent_data["id"], config_options)
+
+        self.dialog.destroy()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1378,6 +1772,7 @@ class AgentDashboard:
 
     def _show_settings(self, agent_data: Dict):
         callbacks = {
+            "configure": self._configure_claude,
             "memory": self._open_memory_viewer,
             "restart_memory": self._restart_memory,
             "proxy": self._configure_proxy,
@@ -1455,6 +1850,35 @@ class AgentDashboard:
         self.root.after(500, self._load_agents)
 
     # Settings actions
+    def _configure_claude(self, agent: Dict):
+        """Open Claude Code configuration dialog."""
+        def on_config_save(agent_id: str, config: Optional[Any]):
+            if config and HAS_BACKEND:
+                try:
+                    # Update agent record with new config
+                    from .registry import load_agent, save_agent
+                    agent_root = manager.get_agent_root()
+                    rec = load_agent(agent_root, agent_id)
+                    updated = rec.model_copy()
+                    updated.config = config
+                    save_agent(agent_root, updated)
+
+                    # Regenerate run.cmd with new env vars
+                    agent_dir = agent_root / agent_id
+                    from .manager import _write_run_cmd
+                    title = f"{rec.purpose} | :{rec.port}"
+                    _write_run_cmd(
+                        agent_dir, title=title, port=rec.port,
+                        data_dir=agent_dir, project_path=Path(rec.project_path),
+                        proxy=rec.proxy, config=config
+                    )
+                except Exception as e:
+                    print(f"Config save error: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+        AgentConfigDialog(self.root, agent, self.theme, on_config_save)
+
     def _open_memory_viewer(self, agent: Dict):
         if HAS_BACKEND:
             try:
