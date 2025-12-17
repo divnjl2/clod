@@ -414,12 +414,44 @@ class EmbeddedConsole(tk.Frame):
         self.console_container.bind("<Button-1>", lambda e: self._focus_console())
         self.console_container.bind("<FocusIn>", lambda e: self._focus_console())
 
+        # Also bind to the frame itself and toolbar for better click coverage
+        self.bind("<Button-1>", lambda e: self._focus_console())
+
+        # Auto-focus console when toplevel window is activated
+        toplevel = self.winfo_toplevel()
+        toplevel.bind("<FocusIn>", lambda e: self._schedule_focus())
+        toplevel.bind("<Activate>", lambda e: self._schedule_focus())
+
+    def _schedule_focus(self) -> None:
+        """Schedule focus to console after small delay."""
+        if self.console_hwnd and self.running:
+            self.after(50, self._focus_console)
+
     def _focus_console(self) -> None:
         """Set keyboard focus to the embedded console."""
         if not self.console_hwnd:
             return
         try:
-            user32.SetForegroundWindow(self.console_hwnd)
+            # For child windows, we need to:
+            # 1. Bring the parent (toplevel) to foreground first
+            # 2. Then set focus to the child console window
+            toplevel = self.winfo_toplevel()
+            toplevel_hwnd = toplevel.winfo_id()
+
+            # Bring toplevel to foreground
+            user32.SetForegroundWindow(toplevel_hwnd)
+
+            # Small delay to ensure foreground is set
+            self.after(10, self._set_console_focus)
+        except Exception as e:
+            print(f"Focus error: {e}")
+
+    def _set_console_focus(self) -> None:
+        """Actually set focus to console window."""
+        if not self.console_hwnd:
+            return
+        try:
+            # SetFocus works for child windows when parent is foreground
             user32.SetFocus(self.console_hwnd)
         except:
             pass
@@ -630,10 +662,8 @@ class EmbeddedConsole(tk.Frame):
         widget.bind("<Leave>", hide_tooltip)
 
     def focus_console(self) -> None:
-        """Set focus to the embedded console."""
-        if self.console_hwnd:
-            user32.SetForegroundWindow(self.console_hwnd)
-            user32.SetFocus(self.console_hwnd)
+        """Set focus to the embedded console (public method)."""
+        self._focus_console()
 
 
 def create_agent_window(
