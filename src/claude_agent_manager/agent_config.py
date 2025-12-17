@@ -21,18 +21,35 @@ logger = logging.getLogger(__name__)
 # DEFAULT CONFIGURATIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-DEFAULT_MCP_SERVERS = {
-    "sequential-thinking": {
-        "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@anthropic/sequential-thinking-server"]
-    },
-    "filesystem": {
-        "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@anthropic/filesystem-server"]
+import sys
+
+# Windows requires cmd /c wrapper for npx
+if sys.platform == "win32":
+    DEFAULT_MCP_SERVERS = {
+        "sequential-thinking": {
+            "type": "stdio",
+            "command": "cmd",
+            "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-sequential-thinking"]
+        },
+        "filesystem": {
+            "type": "stdio",
+            "command": "cmd",
+            "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem"]
+        }
     }
-}
+else:
+    DEFAULT_MCP_SERVERS = {
+        "sequential-thinking": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+        },
+        "filesystem": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem"]
+        }
+    }
 
 
 def build_default_mcp_servers(port: int, data_dir: Path, claude_mem_root: Optional[str] = None) -> dict:
