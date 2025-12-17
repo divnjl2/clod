@@ -33,6 +33,20 @@ MoveWindow = user32.MoveWindow
 MoveWindow.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.BOOL]
 MoveWindow.restype = wintypes.BOOL
 
+SetForegroundWindow = user32.SetForegroundWindow
+SetForegroundWindow.argtypes = [wintypes.HWND]
+SetForegroundWindow.restype = wintypes.BOOL
+
+ShowWindow = user32.ShowWindow
+ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+ShowWindow.restype = wintypes.BOOL
+
+# ShowWindow commands
+SW_HIDE = 0
+SW_MINIMIZE = 6
+SW_RESTORE = 9
+SW_SHOW = 5
+
 
 def _get_window_text(hwnd: int) -> str:
     length = GetWindowTextLengthW(hwnd)
@@ -66,3 +80,19 @@ def find_main_window(pid: int) -> Optional[int]:
 
 def move_window(hwnd: int, x: int, y: int, w: int, h: int) -> None:
     MoveWindow(hwnd, x, y, w, h, True)
+
+
+def bring_to_front(hwnd: int) -> None:
+    """Bring window to foreground."""
+    ShowWindow(hwnd, SW_RESTORE)
+    SetForegroundWindow(hwnd)
+
+
+def minimize_window(hwnd: int) -> None:
+    """Minimize window."""
+    ShowWindow(hwnd, SW_MINIMIZE)
+
+
+def restore_window(hwnd: int) -> None:
+    """Restore minimized window."""
+    ShowWindow(hwnd, SW_RESTORE)

@@ -21,9 +21,8 @@ class AppSettings:
     # Appearance
     theme: Literal["dark", "light"] = "dark"
 
-    # Tiling engine
-    tiler_engine: Literal["builtin", "komorebi"] = "builtin"
-    tile_layout: Literal["grid", "grid_split", "viewer_only", "smart", "horizontal", "vertical"] = "smart"
+    # Tiling
+    tile_layout: Literal["smart", "grid", "horizontal", "vertical"] = "smart"
     tile_split_ratio: float = 0.55
     tile_gap: int = 8  # Gap between windows in pixels
 
@@ -37,7 +36,7 @@ class AppSettings:
 
     # Hotkeys (format: "ctrl+alt+key" or "none" to disable)
     hotkey_tile_all: str = "ctrl+alt+t"  # Tile all open agent windows
-    hotkey_tile_smart: str = "ctrl+alt+s"  # Smart tile (auto-layout)
+    hotkey_minimize_all: str = "ctrl+alt+m"  # Minimize all agent windows
     hotkey_focus_agent_1: str = "ctrl+alt+1"  # Focus agent 1 window
     hotkey_focus_agent_2: str = "ctrl+alt+2"  # Focus agent 2 window
     hotkey_focus_agent_3: str = "ctrl+alt+3"  # Focus agent 3 window

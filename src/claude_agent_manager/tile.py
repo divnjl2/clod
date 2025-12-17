@@ -14,7 +14,7 @@ from ctypes import wintypes
 from dataclasses import dataclass
 from typing import List, Literal, Optional, Tuple
 
-from .windows import find_main_window, move_window
+from .windows import find_main_window, move_window, bring_to_front
 
 # Windows API for monitor info
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -144,6 +144,7 @@ def tile_windows(
     layout: TileLayout = "smart",
     monitor: Optional[MonitorRect] = None,
     gap: int = 8,
+    bring_to_foreground: bool = True,
 ) -> None:
     """
     Tile windows according to layout.
@@ -153,6 +154,7 @@ def tile_windows(
         layout: Layout type - "horizontal", "vertical", "grid", or "smart"
         monitor: Monitor to tile on (defaults to primary)
         gap: Gap between windows in pixels
+        bring_to_foreground: If True, bring windows to front after tiling
     """
     if not hwnds:
         return
@@ -178,6 +180,14 @@ def tile_windows(
         _tile_vertical(hwnds, monitor, gap)
     elif layout == "grid":
         _tile_grid(hwnds, monitor, gap)
+
+    # Bring windows to foreground
+    if bring_to_foreground:
+        for hwnd in reversed(hwnds):  # First window ends up on top
+            try:
+                bring_to_front(hwnd)
+            except Exception:
+                pass
 
 
 def _tile_single(hwnd: int, mon: MonitorRect, gap: int) -> None:

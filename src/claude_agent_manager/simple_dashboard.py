@@ -1650,11 +1650,11 @@ class AgentDashboard:
         # Tile button (before settings)
         self.tile_btn = tk.Label(
             self.footer, text="⊞",
-            font=("Segoe UI", 12),
+            font=("Segoe UI", 10),
             bg=t["card_bg"], fg=t["fg_dim"],
             cursor="hand2"
         )
-        self.tile_btn.pack(side=tk.RIGHT, padx=(0, 12))
+        self.tile_btn.pack(side=tk.RIGHT, padx=(0, 10))
         self.tile_btn.bind("<Button-1>", lambda e: self._tile_agent_windows())
         self.tile_btn.bind("<Enter>", lambda e: self.tile_btn.configure(fg=self.theme["accent"]))
         self.tile_btn.bind("<Leave>", lambda e: self.tile_btn.configure(fg=self.theme["fg_dim"]))
@@ -1703,34 +1703,6 @@ class AgentDashboard:
         # Form
         form = tk.Frame(dialog, bg=t["card_bg"])
         form.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
-
-        # Tiler engine
-        tk.Label(
-            form, text="Tiler Engine", font=("Segoe UI", 9),
-            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
-        ).pack(fill=tk.X, pady=(0, 2))
-
-        tiler_var = tk.StringVar(value=current.tiler_engine)
-        tiler_frame = tk.Frame(form, bg=t["btn_bg"])
-        tiler_frame.pack(fill=tk.X, pady=(0, 10))
-
-        for engine in ["builtin", "komorebi"]:
-            btn = tk.Label(
-                tiler_frame, text=engine.title(),
-                font=("Segoe UI", 8),
-                bg=t["accent"] if current.tiler_engine == engine else t["btn_bg"],
-                fg="#fff" if current.tiler_engine == engine else t["fg"],
-                padx=12, pady=4, cursor="hand2"
-            )
-            btn.pack(side=tk.LEFT, padx=(0, 1))
-
-            def select_tiler(e=engine, b=btn):
-                tiler_var.set(e)
-                for child in tiler_frame.winfo_children():
-                    child.configure(bg=t["btn_bg"], fg=t["fg"])
-                b.configure(bg=t["accent"], fg="#fff")
-
-            btn.bind("<Button-1>", lambda e, eng=engine, b=btn: select_tiler(eng, b))
 
         # Tile layout
         tk.Label(
@@ -1803,6 +1775,7 @@ class AgentDashboard:
         hotkey_entries = {}
         hotkey_labels = [
             ("hotkey_tile_all", "Tile windows"),
+            ("hotkey_minimize_all", "Minimize all"),
             ("hotkey_toggle_dashboard", "Toggle dashboard"),
             ("hotkey_focus_agent_1", "Focus agent 1"),
             ("hotkey_focus_agent_2", "Focus agent 2"),
@@ -1843,13 +1816,12 @@ class AgentDashboard:
 
             new_settings = app_settings.AppSettings(
                 theme="dark" if self.is_dark else "light",
-                tiler_engine=tiler_var.get(),
                 tile_layout=layout_var.get(),
                 auto_tile_on_start=auto_start_var.get(),
                 auto_tile_on_change=auto_change_var.get(),
                 poll_interval_ms=int(poll_val) if poll_val.isdigit() else 1500,
                 hotkey_tile_all=hotkey_values.get("hotkey_tile_all", "ctrl+alt+t"),
-                hotkey_tile_smart=hotkey_values.get("hotkey_tile_smart", "ctrl+alt+s"),
+                hotkey_minimize_all=hotkey_values.get("hotkey_minimize_all", "ctrl+alt+m"),
                 hotkey_focus_agent_1=hotkey_values.get("hotkey_focus_agent_1", "ctrl+alt+1"),
                 hotkey_focus_agent_2=hotkey_values.get("hotkey_focus_agent_2", "ctrl+alt+2"),
                 hotkey_focus_agent_3=hotkey_values.get("hotkey_focus_agent_3", "ctrl+alt+3"),
@@ -1942,6 +1914,14 @@ class AgentDashboard:
                 settings.hotkey_tile_all,
                 lambda: self._tile_agent_windows("smart"),
                 "Tile all agent windows"
+            )
+
+        # Register minimize hotkey
+        if settings.hotkey_minimize_all and settings.hotkey_minimize_all.lower() != "none":
+            hk_manager.register(
+                settings.hotkey_minimize_all,
+                self._minimize_agent_windows,
+                "Minimize all agent windows"
             )
 
         # Register focus hotkeys for agents 1-4
@@ -2813,10 +2793,25 @@ class AgentDashboard:
         try:
             window = windows[index]
             if window.winfo_exists():
+                window.deiconify()  # Restore if minimized
                 window.lift()
                 window.focus_force()
         except Exception as e:
             print(f"Focus error: {e}")
+
+    def _minimize_agent_windows(self):
+        """Minimize all open agent windows."""
+        if not hasattr(self, "_agent_windows"):
+            return
+
+        for agent_id, window in list(self._agent_windows.items()):
+            try:
+                if window.winfo_exists():
+                    window.iconify()  # Minimize
+            except Exception as e:
+                print(f"Minimize error for {agent_id}: {e}")
+
+        print(f"Minimized {len(self._agent_windows)} agent windows")
 
     # Settings actions
     def _configure_claude(self, agent: Dict):
