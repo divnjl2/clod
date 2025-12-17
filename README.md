@@ -43,15 +43,15 @@ Control what each agent can do with preset profiles or custom rules:
       "Read(*)",
       "Write(~/projects/myproject/**)",
       "Edit(~/projects/myproject/**)",
-      "Bash(git *)",
-      "Bash(npm *)",
-      "Bash(python *)",
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(python:*)",
       "mcp__*",
-      "WebFetch(*)"
+      "WebFetch"
     ],
     "deny": [
-      "Bash(rm -rf /)*",
-      "Bash(sudo *)"
+      "Bash(rm -rf /*)",
+      "Bash(sudo:*)"
     ]
   }
 }
