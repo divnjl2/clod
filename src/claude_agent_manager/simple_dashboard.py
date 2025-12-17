@@ -58,6 +58,16 @@ except ImportError:
     EmbeddedConsole = None
     create_agent_window = None
 
+# Import tiling and hotkey support
+try:
+    from .tile import tile_windows, get_primary_monitor_work_area
+    from .hotkeys import get_hotkey_manager, parse_hotkey_string
+    HAS_TILING = True
+except ImportError:
+    HAS_TILING = False
+    tile_windows = None
+    get_hotkey_manager = None
+
 # Terminal panel is disabled (using separate embedded windows instead)
 HAS_TERMINAL = False
 TerminalWidget = None
@@ -1547,6 +1557,9 @@ class AgentDashboard:
         self._load_agents()
         self._schedule_refresh()
 
+        # Initialize global hotkeys
+        self._setup_hotkeys()
+
         # Set initial title bar color
         self.root.after(50, lambda: set_title_bar_color(self.root, self.is_dark))
 
@@ -1634,6 +1647,18 @@ class AgentDashboard:
         self.settings_btn.bind("<Enter>", lambda e: self.settings_btn.configure(fg=self.theme["fg"]))
         self.settings_btn.bind("<Leave>", lambda e: self.settings_btn.configure(fg=self.theme["fg_dim"]))
 
+        # Tile button (before settings)
+        self.tile_btn = tk.Label(
+            self.footer, text="⊞",
+            font=("Segoe UI", 12),
+            bg=t["card_bg"], fg=t["fg_dim"],
+            cursor="hand2"
+        )
+        self.tile_btn.pack(side=tk.RIGHT, padx=(0, 12))
+        self.tile_btn.bind("<Button-1>", lambda e: self._tile_agent_windows())
+        self.tile_btn.bind("<Enter>", lambda e: self.tile_btn.configure(fg=self.theme["accent"]))
+        self.tile_btn.bind("<Leave>", lambda e: self.tile_btn.configure(fg=self.theme["fg_dim"]))
+
         # Settings panel (hidden) - disable propagation
         self.settings_panel = AgentSettingsPanel(
             self.main, theme=t, on_close=self._close_settings
@@ -1664,15 +1689,15 @@ class AgentDashboard:
         dialog = tk.Toplevel(self.root)
         dialog.title("Settings")
         dialog.configure(bg=t["card_bg"])
-        dialog.geometry("340x280")
+        dialog.geometry("380x520")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
 
         # Center
         dialog.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 340) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 280) // 2
+        x = self.root.winfo_x() + (self.root.winfo_width() - 380) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 520) // 2
         dialog.geometry(f"+{x}+{y}")
 
         # Form
@@ -1717,9 +1742,9 @@ class AgentDashboard:
         layout_frame = tk.Frame(form, bg=t["btn_bg"])
         layout_frame.pack(fill=tk.X, pady=(0, 10))
 
-        for layout in ["grid", "grid_split", "viewer_only"]:
+        for layout in ["smart", "grid", "horizontal", "vertical"]:
             btn = tk.Label(
-                layout_frame, text=layout.replace("_", " ").title(),
+                layout_frame, text=layout.title(),
                 font=("Segoe UI", 8),
                 bg=t["accent"] if current.tile_layout == layout else t["btn_bg"],
                 fg="#fff" if current.tile_layout == layout else t["fg"],
@@ -1764,12 +1789,58 @@ class AgentDashboard:
         poll_entry.insert(0, str(current.poll_interval_ms))
         poll_entry.pack(anchor="w", ipady=4)
 
+        # Hotkeys section
+        tk.Label(
+            form, text="Hotkeys", font=("Segoe UI", 9, "bold"),
+            bg=t["card_bg"], fg=t["fg"], anchor="w"
+        ).pack(fill=tk.X, pady=(12, 4))
+
+        tk.Label(
+            form, text="Format: ctrl+alt+key (e.g., ctrl+alt+t) or 'none' to disable",
+            font=("Segoe UI", 7), bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 6))
+
+        hotkey_entries = {}
+        hotkey_labels = [
+            ("hotkey_tile_all", "Tile windows"),
+            ("hotkey_toggle_dashboard", "Toggle dashboard"),
+            ("hotkey_focus_agent_1", "Focus agent 1"),
+            ("hotkey_focus_agent_2", "Focus agent 2"),
+            ("hotkey_focus_agent_3", "Focus agent 3"),
+            ("hotkey_focus_agent_4", "Focus agent 4"),
+        ]
+
+        for attr, label in hotkey_labels:
+            row = tk.Frame(form, bg=t["card_bg"])
+            row.pack(fill=tk.X, pady=1)
+
+            tk.Label(
+                row, text=label, font=("Segoe UI", 8),
+                bg=t["card_bg"], fg=t["fg_dim"], width=14, anchor="w"
+            ).pack(side=tk.LEFT)
+
+            entry = tk.Entry(
+                row, font=("Segoe UI", 9),
+                bg=t["btn_bg"], fg=t["fg"],
+                insertbackground=t["fg"], relief="flat", bd=0, width=16
+            )
+            entry.insert(0, getattr(current, attr, "none"))
+            entry.pack(side=tk.LEFT, padx=4, ipady=2)
+            hotkey_entries[attr] = entry
+
         # Buttons
         btn_frame = tk.Frame(dialog, bg=t["card_bg"])
         btn_frame.pack(fill=tk.X, padx=16, pady=(0, 12))
 
         def on_save():
             poll_val = poll_entry.get().strip()
+
+            # Collect hotkey values
+            hotkey_values = {}
+            for attr, entry in hotkey_entries.items():
+                val = entry.get().strip().lower()
+                hotkey_values[attr] = val if val else "none"
+
             new_settings = app_settings.AppSettings(
                 theme="dark" if self.is_dark else "light",
                 tiler_engine=tiler_var.get(),
@@ -1777,10 +1848,20 @@ class AgentDashboard:
                 auto_tile_on_start=auto_start_var.get(),
                 auto_tile_on_change=auto_change_var.get(),
                 poll_interval_ms=int(poll_val) if poll_val.isdigit() else 1500,
+                hotkey_tile_all=hotkey_values.get("hotkey_tile_all", "ctrl+alt+t"),
+                hotkey_tile_smart=hotkey_values.get("hotkey_tile_smart", "ctrl+alt+s"),
+                hotkey_focus_agent_1=hotkey_values.get("hotkey_focus_agent_1", "ctrl+alt+1"),
+                hotkey_focus_agent_2=hotkey_values.get("hotkey_focus_agent_2", "ctrl+alt+2"),
+                hotkey_focus_agent_3=hotkey_values.get("hotkey_focus_agent_3", "ctrl+alt+3"),
+                hotkey_focus_agent_4=hotkey_values.get("hotkey_focus_agent_4", "ctrl+alt+4"),
+                hotkey_toggle_dashboard=hotkey_values.get("hotkey_toggle_dashboard", "ctrl+alt+d"),
             )
             app_settings.save_settings(new_settings)
             app_settings.invalidate_cache()
             dialog.destroy()
+
+            # Notify about hotkey changes
+            print("Settings saved. Restart app for hotkey changes to take effect.")
 
         save_btn = AnimatedButton(
             btn_frame, text="Save",
@@ -1816,6 +1897,7 @@ class AgentDashboard:
         self.theme_toggle.set_bg(t["card_bg"])
         self.footer.configure(bg=t["card_bg"])
         self.settings_btn.configure(bg=t["card_bg"], fg=t["fg_dim"])
+        self.tile_btn.configure(bg=t["card_bg"], fg=t["fg_dim"])
         self.sep.configure(bg=t["separator"])
         self.agents_frame.configure(bg=t["card_bg"])
 
@@ -1841,7 +1923,78 @@ class AgentDashboard:
 
     def _schedule_refresh(self):
         self._refresh_agents()
+        self._process_hotkey_callbacks()
         self.root.after(5000, self._schedule_refresh)
+
+    def _setup_hotkeys(self):
+        """Initialize global hotkeys from settings."""
+        if not HAS_TILING or get_hotkey_manager is None:
+            return
+
+        from . import settings as app_settings
+        settings = app_settings.get_settings()
+
+        hk_manager = get_hotkey_manager()
+
+        # Register tile hotkey
+        if settings.hotkey_tile_all and settings.hotkey_tile_all.lower() != "none":
+            hk_manager.register(
+                settings.hotkey_tile_all,
+                lambda: self._tile_agent_windows("smart"),
+                "Tile all agent windows"
+            )
+
+        # Register focus hotkeys for agents 1-4
+        for i, hotkey_attr in enumerate([
+            'hotkey_focus_agent_1', 'hotkey_focus_agent_2',
+            'hotkey_focus_agent_3', 'hotkey_focus_agent_4'
+        ]):
+            hotkey = getattr(settings, hotkey_attr, "none")
+            if hotkey and hotkey.lower() != "none":
+                idx = i  # Capture loop variable
+                hk_manager.register(
+                    hotkey,
+                    lambda idx=idx: self._focus_agent_window(idx),
+                    f"Focus agent {i + 1}"
+                )
+
+        # Register toggle dashboard hotkey
+        if settings.hotkey_toggle_dashboard and settings.hotkey_toggle_dashboard.lower() != "none":
+            hk_manager.register(
+                settings.hotkey_toggle_dashboard,
+                self._toggle_dashboard_visibility,
+                "Toggle dashboard visibility"
+            )
+
+        # Start hotkey listener
+        hk_manager.start()
+
+        # Process callbacks periodically
+        self._hotkey_poll_id = self.root.after(100, self._process_hotkey_callbacks)
+
+    def _process_hotkey_callbacks(self):
+        """Process pending hotkey callbacks in main thread."""
+        if HAS_TILING and get_hotkey_manager is not None:
+            try:
+                hk_manager = get_hotkey_manager()
+                hk_manager.process_callbacks()
+            except Exception as e:
+                print(f"Hotkey callback error: {e}")
+
+        # Schedule next check
+        self._hotkey_poll_id = self.root.after(100, self._process_hotkey_callbacks)
+
+    def _toggle_dashboard_visibility(self):
+        """Toggle dashboard window visibility."""
+        try:
+            if self.root.state() == 'withdrawn':
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+            else:
+                self.root.withdraw()
+        except Exception as e:
+            print(f"Toggle visibility error: {e}")
 
     def _refresh_agents(self):
         """Refresh agent data without full re-render if possible."""
@@ -2612,6 +2765,58 @@ class AgentDashboard:
             print(f"Stop error: {e}")
 
         self.root.after(500, self._load_agents)
+
+    def _tile_agent_windows(self, layout: str = "smart"):
+        """Tile all open agent windows."""
+        if not HAS_TILING:
+            print("Tiling not available")
+            return
+
+        # Get all open embedded windows
+        if not hasattr(self, "_agent_windows"):
+            print("No agent windows open")
+            return
+
+        hwnds = []
+        for agent_id, window in list(self._agent_windows.items()):
+            try:
+                if window.winfo_exists():
+                    # Get the HWND of the Toplevel window
+                    hwnd = int(window.wm_frame(), 16)
+                    if hwnd:
+                        hwnds.append(hwnd)
+            except Exception as e:
+                print(f"Error getting hwnd for {agent_id}: {e}")
+
+        if not hwnds:
+            print("No windows to tile")
+            return
+
+        # Get settings for layout and gap
+        from . import settings as app_settings
+        settings = app_settings.get_settings()
+        gap = getattr(settings, 'tile_gap', 8)
+
+        # Tile windows
+        tile_windows(hwnds, layout=layout, gap=gap)
+        print(f"Tiled {len(hwnds)} windows with layout '{layout}'")
+
+    def _focus_agent_window(self, index: int):
+        """Focus agent window by index (0-based)."""
+        if not hasattr(self, "_agent_windows") or not self._agent_windows:
+            return
+
+        windows = list(self._agent_windows.values())
+        if index >= len(windows):
+            return
+
+        try:
+            window = windows[index]
+            if window.winfo_exists():
+                window.lift()
+                window.focus_force()
+        except Exception as e:
+            print(f"Focus error: {e}")
 
     # Settings actions
     def _configure_claude(self, agent: Dict):

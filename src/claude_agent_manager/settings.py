@@ -23,8 +23,9 @@ class AppSettings:
 
     # Tiling engine
     tiler_engine: Literal["builtin", "komorebi"] = "builtin"
-    tile_layout: Literal["grid", "grid_split", "viewer_only"] = "grid_split"
+    tile_layout: Literal["grid", "grid_split", "viewer_only", "smart", "horizontal", "vertical"] = "smart"
     tile_split_ratio: float = 0.55
+    tile_gap: int = 8  # Gap between windows in pixels
 
     # Auto-tiling behavior
     auto_tile_on_start: bool = True
@@ -33,6 +34,15 @@ class AppSettings:
     # Monitor settings
     monitor_mode: Literal["primary", "ui_monitor", "fixed_index"] = "primary"
     fixed_monitor_index: int = 0
+
+    # Hotkeys (format: "ctrl+alt+key" or "none" to disable)
+    hotkey_tile_all: str = "ctrl+alt+t"  # Tile all open agent windows
+    hotkey_tile_smart: str = "ctrl+alt+s"  # Smart tile (auto-layout)
+    hotkey_focus_agent_1: str = "ctrl+alt+1"  # Focus agent 1 window
+    hotkey_focus_agent_2: str = "ctrl+alt+2"  # Focus agent 2 window
+    hotkey_focus_agent_3: str = "ctrl+alt+3"  # Focus agent 3 window
+    hotkey_focus_agent_4: str = "ctrl+alt+4"  # Focus agent 4 window
+    hotkey_toggle_dashboard: str = "ctrl+alt+d"  # Show/hide dashboard
 
     # Polling
     poll_interval_ms: int = 1500
