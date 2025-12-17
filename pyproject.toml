@@ -12,6 +12,8 @@ dependencies = [
   "rich>=13.7.1",
   "pydantic>=2.7.0",
   "psutil>=6.0.0",
+  "pywinpty>=2.0.0; sys_platform == 'win32'",
+  "pyte>=0.8.0",
 ]
 
 [project.scripts]

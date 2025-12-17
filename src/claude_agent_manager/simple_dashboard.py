@@ -38,7 +38,7 @@ def ensure_app_dirs() -> Path:
 try:
     from . import manager
     from .config import load_config
-    from .processes import pm2_status, pm2_restart
+    from .processes import pm2_status, pm2_restart, which
     from . import agent_config as ac
     from .registry import AgentConfigOptions
     HAS_BACKEND = True
@@ -47,6 +47,20 @@ except ImportError:
     ac = None
     AgentConfigOptions = None
     manager = None
+    which = None
+
+# Import embedded console (optional, graceful fallback)
+try:
+    from .terminal.embedded_console import EmbeddedConsole, create_agent_window
+    HAS_EMBEDDED_CONSOLE = True
+except ImportError:
+    HAS_EMBEDDED_CONSOLE = False
+    EmbeddedConsole = None
+    create_agent_window = None
+
+# Terminal panel is disabled (using separate embedded windows instead)
+HAS_TERMINAL = False
+TerminalWidget = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -662,6 +676,176 @@ class AgentSettingsPanel(tk.Frame):
         # Update action buttons
         for btn in self.action_buttons:
             btn.update_theme(t)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TERMINAL PANEL (Embedded CLI)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TerminalPanel(tk.Frame):
+    """Embedded terminal panel for running Claude CLI within the dashboard."""
+
+    def __init__(self, parent: tk.Widget, theme: Dict, on_close: Callable, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.theme = theme
+        self.on_close = on_close
+        self.agent_data: Optional[Dict] = None
+        self.terminal: Optional[Any] = None  # TerminalWidget instance
+
+        self.configure(bg=theme["card_bg"])
+        self._build_ui()
+
+    def _build_ui(self):
+        t = self.theme
+
+        # Header
+        self.header = tk.Frame(self, bg=t["card_bg"])
+        self.header.pack(fill=tk.X, padx=8, pady=(6, 4))
+
+        self.title_lbl = tk.Label(
+            self.header, text="Terminal",
+            font=("Segoe UI Semibold", 10),
+            bg=t["card_bg"], fg=t["fg"]
+        )
+        self.title_lbl.pack(side=tk.LEFT)
+
+        self.status_lbl = tk.Label(
+            self.header, text="",
+            font=("Segoe UI", 8),
+            bg=t["card_bg"], fg=t["fg_dim"]
+        )
+        self.status_lbl.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.close_btn = tk.Label(
+            self.header, text="✕", font=("Segoe UI", 11),
+            bg=t["card_bg"], fg=t["fg_dim"], cursor="hand2"
+        )
+        self.close_btn.pack(side=tk.RIGHT)
+        self.close_btn.bind("<Button-1>", lambda e: self._close())
+        self.close_btn.bind("<Enter>", lambda e: self.close_btn.configure(fg=self.theme["fg"]))
+        self.close_btn.bind("<Leave>", lambda e: self.close_btn.configure(fg=self.theme["fg_dim"]))
+
+        # Separator
+        self.sep = tk.Frame(self, bg=t["separator"], height=1)
+        self.sep.pack(fill=tk.X, padx=8, pady=(0, 4))
+
+        # Terminal container
+        self.terminal_frame = tk.Frame(self, bg=t["bg"])
+        self.terminal_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+
+        # Placeholder if terminal not available
+        if not HAS_TERMINAL:
+            placeholder = tk.Label(
+                self.terminal_frame,
+                text="Terminal not available.\nInstall pywinpty: pip install pywinpty",
+                font=("Consolas", 9),
+                bg=t["bg"], fg=t["fg_dim"],
+                justify="center"
+            )
+            placeholder.pack(expand=True)
+
+    def show(self, agent_data: Dict):
+        """Show terminal for the given agent."""
+        self.agent_data = agent_data
+
+        if not HAS_TERMINAL:
+            self.status_lbl.configure(text="(unavailable)", fg="#f87171")
+            return
+
+        # Build terminal theme from dashboard theme
+        term_theme = {
+            "bg": self.theme["bg"],
+            "fg": self.theme["fg"],
+            "cursor": self.theme["accent"],
+            "selection": self.theme.get("selection", "#264f78"),
+        }
+
+        # Create terminal widget if not exists
+        if self.terminal is None:
+            self.terminal = TerminalWidget(
+                self.terminal_frame,
+                theme=term_theme,
+                font_family="Consolas",
+                font_size=10,
+                scrollback=10000,
+                on_exit=self._on_terminal_exit
+            )
+            self.terminal.pack(fill=tk.BOTH, expand=True)
+
+        # Start Claude CLI in agent's project directory
+        self._start_terminal()
+
+    def _start_terminal(self):
+        """Start the terminal with Claude CLI."""
+        if not self.terminal or not self.agent_data:
+            return
+
+        # Get Claude executable
+        claude_cmd = which("claude") if which else None
+        if not claude_cmd:
+            self.status_lbl.configure(text="(claude not found)", fg="#f87171")
+            return
+
+        project_path = self.agent_data.get("project_path", ".")
+        port = self.agent_data.get("port", 3100)
+        agent_id = self.agent_data.get("id", "unknown")
+
+        # Environment with memory worker port
+        import os
+        env = {**os.environ, "CLAUDE_MEM_WORKER_PORT": str(port)}
+
+        # Start terminal
+        self.terminal.start(
+            cmd=["claude"],
+            cwd=project_path,
+            env=env
+        )
+
+        name = self.agent_data.get("display_name") or self.agent_data.get("purpose", agent_id)
+        self.title_lbl.configure(text=f"Terminal: {name[:20]}")
+        self.status_lbl.configure(text="running", fg=self.theme["online"])
+
+    def _on_terminal_exit(self, exit_code: int):
+        """Handle terminal process exit."""
+        self.status_lbl.configure(
+            text=f"exited ({exit_code})",
+            fg=self.theme["fg_dim"]
+        )
+
+    def _close(self):
+        """Close terminal and hide panel."""
+        if self.terminal:
+            self.terminal.stop()
+        self.on_close()
+
+    def stop(self):
+        """Stop terminal without closing panel."""
+        if self.terminal:
+            self.terminal.stop()
+            self.status_lbl.configure(text="stopped", fg=self.theme["fg_dim"])
+
+    def update_theme(self, theme: Dict):
+        """Update panel theme."""
+        self.theme = theme
+        t = theme
+
+        self.configure(bg=t["card_bg"])
+        self.header.configure(bg=t["card_bg"])
+        self.title_lbl.configure(bg=t["card_bg"], fg=t["fg"])
+        self.status_lbl.configure(bg=t["card_bg"])
+        self.close_btn.configure(bg=t["card_bg"], fg=t["fg_dim"])
+        self.sep.configure(bg=t["separator"])
+        self.terminal_frame.configure(bg=t["bg"])
+
+        # Update terminal theme if available
+        if self.terminal and hasattr(self.terminal, 'update_theme'):
+            term_theme = {
+                "bg": t["bg"],
+                "fg": t["fg"],
+                "cursor": t["accent"],
+                "selection": t.get("selection", "#264f78"),
+            }
+            self.terminal.update_theme(term_theme)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1355,7 +1539,9 @@ class AgentDashboard:
         self.agents_data: List[Dict] = []
         self.agent_cards: List[AgentCard] = []
         self.settings_visible = False
+        self.terminal_visible = False
         self._theme_transition_step = 0
+        self._terminal_windows: Dict[str, tk.Toplevel] = {}  # agent_id -> window
 
         self._build_ui()
         self._load_agents()
@@ -1453,6 +1639,12 @@ class AgentDashboard:
             self.main, theme=t, on_close=self._close_settings
         )
         self.settings_panel.pack_propagate(False)
+
+        # Terminal panel (hidden) - shows embedded CLI
+        self.terminal_panel = TerminalPanel(
+            self.main, theme=t, on_close=self._close_terminal
+        )
+        self.terminal_panel.pack_propagate(False)
 
     def _on_theme_toggle(self, is_dark: bool):
         self.is_dark = is_dark
@@ -1634,6 +1826,9 @@ class AgentDashboard:
         # Update settings panel
         self.settings_panel.update_theme(t)
 
+        # Update terminal panel
+        self.terminal_panel.update_theme(t)
+
         # Update empty state if shown
         for w in self.agents_frame.winfo_children():
             if isinstance(w, tk.Frame) and w not in [c for c in self.agent_cards]:
@@ -1677,7 +1872,16 @@ class AgentDashboard:
                 # Use manager to get agents with status
                 agents = manager.list_agents()
                 for agent in agents:
-                    status = "online" if agent.worker_online else "offline"
+                    # Check if embedded window is open for this agent
+                    has_embedded_window = (
+                        hasattr(self, "_agent_windows")
+                        and agent.id in self._agent_windows
+                        and self._agent_windows[agent.id].winfo_exists()
+                    )
+
+                    # Status is online if worker is running OR embedded window is open
+                    status = "online" if (agent.worker_online or has_embedded_window) else "offline"
+
                     display_name = getattr(agent, 'display_name', None)
                     data.append({
                         "id": agent.id,
@@ -2106,6 +2310,151 @@ class AgentDashboard:
         cur_h = self.root.winfo_height()
         self.root.geometry(f"{self._base_width}x{cur_h}")
 
+    def _show_terminal(self, agent_data: Dict):
+        """Show embedded terminal for the agent."""
+        if self.terminal_visible:
+            # Already visible - just switch agent
+            self.terminal_panel.show(agent_data)
+            return
+
+        self.terminal_visible = True
+
+        # Close settings panel if open
+        if self.settings_visible:
+            self.settings_panel.place_forget()
+            self.settings_visible = False
+
+        # Calculate terminal size - expand window downward
+        term_height = 350
+        cur_w = self.root.winfo_width()
+        cur_h = self.root.winfo_height()
+        self._base_height = cur_h  # Remember original height
+
+        # Expand window downward
+        self.root.geometry(f"{cur_w}x{cur_h + term_height}")
+        self.root.update_idletasks()
+
+        # Place terminal panel at bottom
+        main_w = self.main.winfo_width()
+        self.terminal_panel.place(
+            x=0, y=cur_h - 18,  # Below existing content
+            width=main_w, height=term_height
+        )
+
+        # Start terminal with agent
+        self.terminal_panel.show(agent_data)
+
+    def _close_terminal(self):
+        """Close embedded terminal."""
+        if not self.terminal_visible:
+            return
+        self.terminal_visible = False
+
+        # Stop terminal
+        self.terminal_panel.stop()
+        self.terminal_panel.place_forget()
+
+        # Restore original height
+        cur_w = self.root.winfo_width()
+        self.root.geometry(f"{cur_w}x{self._base_height}")
+
+    def _open_terminal_window(self, agent_data: Dict):
+        """Open a separate terminal window for the agent."""
+        agent_id = agent_data["id"]
+
+        # Check if window already exists
+        if agent_id in self._terminal_windows:
+            win = self._terminal_windows[agent_id]
+            if win.winfo_exists():
+                win.lift()
+                win.focus_force()
+                return
+            else:
+                del self._terminal_windows[agent_id]
+
+        t = self.theme
+        name = agent_data.get("display_name") or agent_data.get("purpose", agent_id[:8])
+
+        # Create window
+        win = tk.Toplevel(self.root)
+        win.title(f"Claude: {name}")
+        win.configure(bg=t["bg"])
+        win.geometry("900x600")
+
+        # Dark title bar on Windows
+        self.root.after(50, lambda: set_title_bar_color(win, self.is_dark))
+
+        # Terminal theme
+        term_theme = {
+            "bg": t["bg"],
+            "fg": t["fg"],
+            "cursor": t["accent"],
+            "selection": t.get("selection", "#264f78"),
+        }
+
+        # Create terminal widget
+        terminal = TerminalWidget(
+            win,
+            theme=term_theme,
+            font_family="Consolas",
+            font_size=11,
+            scrollback=10000,
+            on_exit=lambda code: self._on_terminal_window_exit(agent_id, code)
+        )
+        terminal.pack(fill=tk.BOTH, expand=True)
+
+        # Start Claude CLI
+        project_path = agent_data.get("project_path", ".")
+        port = agent_data.get("port", 3100)
+
+        import os
+        env = {**os.environ, "CLAUDE_MEM_WORKER_PORT": str(port)}
+
+        terminal.start(
+            cmd=["claude"],
+            cwd=project_path,
+            env=env
+        )
+
+        # Store reference
+        self._terminal_windows[agent_id] = win
+        win._terminal = terminal  # Keep reference for cleanup
+
+        # Handle window close
+        def on_close():
+            terminal.stop()
+            win.destroy()
+            if agent_id in self._terminal_windows:
+                del self._terminal_windows[agent_id]
+
+        win.protocol("WM_DELETE_WINDOW", on_close)
+
+    def _on_terminal_window_exit(self, agent_id: str, exit_code: int):
+        """Handle terminal process exit in separate window."""
+        # Process exited, window stays open to see output
+        pass
+
+    def _close_terminal_window(self, agent_id: str):
+        """Close terminal window for agent."""
+        # Close old-style terminal windows
+        if hasattr(self, "_terminal_windows") and agent_id in self._terminal_windows:
+            win = self._terminal_windows[agent_id]
+            if win.winfo_exists():
+                if hasattr(win, '_terminal'):
+                    win._terminal.stop()
+                win.destroy()
+            del self._terminal_windows[agent_id]
+
+        # Close embedded console windows
+        if hasattr(self, "_agent_windows") and agent_id in self._agent_windows:
+            win = self._agent_windows[agent_id]
+            try:
+                if win.winfo_exists():
+                    win.destroy()
+            except:
+                pass
+            del self._agent_windows[agent_id]
+
     def _toggle_agent(self, agent_id: str, current_status: str):
         if current_status == "online":
             self._stop_agent(agent_id)
@@ -2113,21 +2462,143 @@ class AgentDashboard:
             self._start_agent(agent_id)
 
     def _start_agent(self, agent_id: str):
+        # Lock to prevent double-starts - ADD LOCK FIRST
+        if not hasattr(self, "_starting_agents"):
+            self._starting_agents = set()
+
+        if agent_id in self._starting_agents:
+            print(f"Agent {agent_id} is already starting...")
+            return
+
+        # Add lock IMMEDIATELY before any other checks
+        self._starting_agents.add(agent_id)
+
         if not HAS_BACKEND:
+            self._starting_agents.discard(agent_id)
             for a in self.agents_data:
                 if a["id"] == agent_id:
                     a["status"] = "online"
             self._render()
             return
 
-        try:
-            manager.start_agent(agent_id)
-        except Exception as e:
-            print(f"Start error: {e}")
+        # Find agent config
+        agent_data = None
+        for a in self.agents_data:
+            if a["id"] == agent_id:
+                agent_data = a
+                break
 
+        if not agent_data:
+            print(f"Agent not found: {agent_id}")
+            self._starting_agents.discard(agent_id)
+            return
+
+        # Check if agent is already running (has an open window)
+        if hasattr(self, "_agent_windows") and agent_id in self._agent_windows:
+            existing_window = self._agent_windows[agent_id]
+            try:
+                if existing_window.winfo_exists():
+                    # Window exists - bring to front instead of creating new
+                    existing_window.lift()
+                    existing_window.focus_force()
+                    self._starting_agents.discard(agent_id)
+                    return
+                else:
+                    # Window was destroyed externally - clean up
+                    del self._agent_windows[agent_id]
+            except:
+                # Window reference invalid - clean up
+                del self._agent_windows[agent_id]
+
+        # Check if already marked as online (prevent double-click race)
+        if agent_data.get("status") == "online":
+            print(f"Agent {agent_id} already running")
+            self._starting_agents.discard(agent_id)
+            return
+
+        # Use embedded console if available
+        if HAS_EMBEDDED_CONSOLE and create_agent_window:
+            try:
+                # Get working directory from agent config (project_path is the key!)
+                cwd = agent_data.get("project_path", os.path.expanduser("~"))
+                if not cwd or not os.path.isdir(cwd):
+                    cwd = os.path.expanduser("~")
+
+                # Build command
+                cmd = "claude"
+
+                # Create embedded console window
+                theme = {
+                    "bg": "#1e1e1e",
+                    "fg": "#d4d4d4",
+                    "accent": "#0078d4",
+                    "button_bg": "#2d2d2d",
+                    "button_hover": "#3d3d3d",
+                }
+
+                # Callback when window closes
+                def on_window_closed(aid=agent_id):
+                    # Update status to offline
+                    for a in self.agents_data:
+                        if a["id"] == aid:
+                            a["status"] = "offline"
+                    # Remove from tracked windows
+                    if hasattr(self, "_agent_windows") and aid in self._agent_windows:
+                        del self._agent_windows[aid]
+                    # Re-render
+                    self._render()
+
+                window = create_agent_window(
+                    agent_id=agent_id,
+                    agent_name=agent_data.get("name", agent_id),
+                    cmd=cmd,
+                    cwd=cwd,
+                    theme=theme,
+                    on_window_close=on_window_closed,
+                )
+
+                # Track window
+                if not hasattr(self, "_agent_windows"):
+                    self._agent_windows = {}
+                self._agent_windows[agent_id] = window
+
+                # Update status
+                for a in self.agents_data:
+                    if a["id"] == agent_id:
+                        a["status"] = "online"
+                self._render()
+
+                # Release lock
+                self._starting_agents.discard(agent_id)
+                # Don't call _load_agents - embedded console manages its own state
+                return
+
+            except Exception as e:
+                # Release lock on error
+                self._starting_agents.discard(agent_id)
+                print(f"Embedded console error: {e}")
+                # Fallback to standard cmd (lock already released)
+                try:
+                    manager.start_agent(agent_id)
+                except Exception as e2:
+                    print(f"Start error: {e2}")
+                # Don't re-add lock - it's released
+        else:
+            # Fallback to standard cmd window
+            try:
+                manager.start_agent(agent_id)
+            except Exception as e:
+                print(f"Start error: {e}")
+            finally:
+                self._starting_agents.discard(agent_id)
+
+        # Only reload from manager for non-embedded consoles
         self.root.after(500, self._load_agents)
 
     def _stop_agent(self, agent_id: str):
+        # Close our terminal window if open
+        self._close_terminal_window(agent_id)
+
         if not HAS_BACKEND:
             for a in self.agents_data:
                 if a["id"] == agent_id:

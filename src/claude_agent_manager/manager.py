@@ -247,13 +247,14 @@ def create_agent(
     return rec
 
 
-def start_agent(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
+def start_agent(agent_id: str, cfg: Optional[AppConfig] = None, skip_cmd: bool = False) -> AgentRecord:
     """
     Start an existing agent (restart worker, open windows).
 
     Args:
         agent_id: The agent ID to start
         cfg: Optional config
+        skip_cmd: If True, don't spawn cmd window (for embedded terminal)
 
     Returns:
         Updated AgentRecord
@@ -265,7 +266,7 @@ def start_agent(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
     agent = load_agent(agent_root, agent_id)
     agent_dir = agent_root / agent_id
 
-    logger.info(f"[AGENT] start_agent | id={agent_id}")
+    logger.info(f"[AGENT] start_agent | id={agent_id} skip_cmd={skip_cmd}")
 
     # Sync agent-local config files to project (CLAUDE.md, .mcp.json)
     project_path = Path(agent.project_path)
@@ -283,9 +284,9 @@ def start_agent(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentRecord:
         url = f"http://localhost:{agent.port}"
         viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent.id, headless=True)
 
-    # Open claude window if needed
+    # Open claude window if needed (unless skip_cmd for embedded terminal)
     cmd_pid = agent.cmd_pid
-    if not is_pid_running(cmd_pid):
+    if not skip_cmd and not is_pid_running(cmd_pid):
         title = f"{agent.purpose} | :{agent.port}"
         # Always regenerate run.cmd to apply latest proxy/config settings
         run_cmd = _write_run_cmd(
