@@ -3,9 +3,120 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field
+
+
+# Permission preset types
+PermissionPreset = Literal["default", "strict", "permissive", "custom"]
+
+
+class PermissionConfig(BaseModel):
+    """Permission configuration for Claude Code agent."""
+    preset: PermissionPreset = "default"
+    allow: List[str] = Field(default_factory=list)
+    deny: List[str] = Field(default_factory=list)
+
+
+# Default permission presets
+PERMISSION_PRESETS = {
+    "default": {
+        "allow": [
+            "Read(*)",
+            "Bash(git *)",
+            "Bash(ls *)",
+            "Bash(cat *)",
+            "Bash(grep *)",
+            "Bash(find *)",
+            "Bash(npm *)",
+            "Bash(pnpm *)",
+            "Bash(yarn *)",
+            "Bash(pip *)",
+            "Bash(python *)",
+            "Bash(node *)",
+            "Bash(curl *)",
+            "mcp__*",
+            "Task(*)",
+            "WebFetch(*)",
+            "WebSearch(*)",
+        ],
+        "deny": [
+            "Bash(rm -rf /)*",
+            "Bash(sudo *)",
+            "Bash(chmod 777 *)",
+        ]
+    },
+    "strict": {
+        "allow": [
+            "Read(*)",
+            "Bash(git status*)",
+            "Bash(git diff*)",
+            "Bash(git log*)",
+            "Bash(ls *)",
+            "Bash(cat *)",
+            "Bash(grep *)",
+            "mcp__*",
+            "WebFetch(*)",
+        ],
+        "deny": [
+            "Bash(rm *)",
+            "Bash(sudo *)",
+            "Bash(chmod *)",
+            "Bash(curl *)",
+            "Bash(wget *)",
+        ]
+    },
+    "permissive": {
+        "allow": [
+            "Read(*)",
+            "Write(*)",
+            "Edit(*)",
+            "Bash(git *)",
+            "Bash(ls *)",
+            "Bash(cat *)",
+            "Bash(grep *)",
+            "Bash(find *)",
+            "Bash(ps *)",
+            "Bash(kill *)",
+            "Bash(pkill *)",
+            "Bash(pgrep *)",
+            "Bash(lsof *)",
+            "Bash(npm *)",
+            "Bash(pnpm *)",
+            "Bash(yarn *)",
+            "Bash(pip *)",
+            "Bash(python *)",
+            "Bash(node *)",
+            "Bash(docker ps*)",
+            "Bash(docker logs*)",
+            "Bash(docker exec*)",
+            "Bash(curl *)",
+            "Bash(wget *)",
+            "Bash(make *)",
+            "Bash(cargo *)",
+            "Bash(go *)",
+            "mcp__*",
+            "Task(*)",
+            "WebFetch(*)",
+            "WebSearch(*)",
+        ],
+        "deny": [
+            "Bash(rm -rf /)*",
+            "Bash(sudo rm -rf *)",
+            "Bash(chmod 777 /)*",
+        ]
+    },
+    "custom": {
+        "allow": [],
+        "deny": []
+    }
+}
+
+
+def get_permission_preset(preset: PermissionPreset) -> dict:
+    """Get permission preset by name."""
+    return PERMISSION_PRESETS.get(preset, PERMISSION_PRESETS["default"])
 
 
 class ProxyConfig(BaseModel):
@@ -53,11 +164,37 @@ class AgentRecord(BaseModel):
     use_browser: bool = False
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     config: AgentConfigOptions = Field(default_factory=AgentConfigOptions)
+    permissions: PermissionConfig = Field(default_factory=PermissionConfig)
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
     def get_display_name(self) -> str:
         """Get display name, falling back to purpose if not set."""
         return self.display_name if self.display_name else self.purpose
+
+    def get_effective_permissions(self) -> dict:
+        """Get effective permissions (preset + custom overrides)."""
+        preset_perms = get_permission_preset(self.permissions.preset)
+
+        if self.permissions.preset == "custom":
+            # Custom mode: use only custom allow/deny
+            return {
+                "allow": self.permissions.allow,
+                "deny": self.permissions.deny
+            }
+
+        # Preset mode: merge preset with custom additions
+        allow = list(preset_perms["allow"])
+        deny = list(preset_perms["deny"])
+
+        # Add custom rules
+        for rule in self.permissions.allow:
+            if rule not in allow:
+                allow.append(rule)
+        for rule in self.permissions.deny:
+            if rule not in deny:
+                deny.append(rule)
+
+        return {"allow": allow, "deny": deny}
 
 
 def agent_dir(agent_root: Path, agent_id: str) -> Path:
@@ -96,3 +233,66 @@ def iter_agents(agent_root: Path) -> list[AgentRecord]:
         except Exception:
             continue
     return agents
+
+
+def write_claude_settings(project_path: Path, agent: AgentRecord) -> Path:
+    """
+    Write .claude/settings.json to project directory with agent permissions.
+
+    Args:
+        project_path: Path to project directory
+        agent: Agent record with permissions config
+
+    Returns:
+        Path to written settings.json file
+    """
+    claude_dir = project_path / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+
+    settings_path = claude_dir / "settings.json"
+
+    # Get effective permissions
+    perms = agent.get_effective_permissions()
+
+    settings = {
+        "permissions": {
+            "allow": perms["allow"],
+            "deny": perms["deny"]
+        }
+    }
+
+    # Preserve existing settings if any
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8"))
+            # Merge - our permissions override
+            existing["permissions"] = settings["permissions"]
+            settings = existing
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    return settings_path
+
+
+def update_agent_permissions(agent_root: Path, agent_id: str, permissions: PermissionConfig) -> AgentRecord:
+    """
+    Update agent permissions and write to .claude/settings.json.
+
+    Args:
+        agent_root: Path to agents root directory
+        agent_id: Agent ID
+        permissions: New permission configuration
+
+    Returns:
+        Updated agent record
+    """
+    agent = load_agent(agent_root, agent_id)
+    agent.permissions = permissions
+    save_agent(agent_root, agent)
+
+    # Write to project .claude/settings.json
+    project_path = Path(agent.project_path)
+    write_claude_settings(project_path, agent)
+
+    return agent

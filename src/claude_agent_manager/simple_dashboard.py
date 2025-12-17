@@ -951,7 +951,7 @@ class AgentConfigDialog:
         self.tab_frame = tk.Frame(main, bg=t["card_bg"])
         self.tab_frame.pack(fill=tk.X, padx=12, pady=(8, 0))
 
-        self.tabs = ["System Prompt", "MCP Servers", "Settings"]
+        self.tabs = ["System Prompt", "MCP Servers", "Settings", "Permissions"]
         self.tab_buttons = []
         self.current_tab = 0
 
@@ -975,6 +975,7 @@ class AgentConfigDialog:
         self._build_prompt_tab()
         self._build_mcp_tab()
         self._build_settings_tab()
+        self._build_permissions_tab()
 
         # Show first tab
         self._show_tab(0)
@@ -1019,14 +1020,18 @@ class AgentConfigDialog:
         self.prompt_frame.pack_forget()
         self.mcp_frame.pack_forget()
         self.settings_frame.pack_forget()
+        if hasattr(self, 'permissions_frame'):
+            self.permissions_frame.pack_forget()
 
         # Show selected tab
         if idx == 0:
             self.prompt_frame.pack(fill=tk.BOTH, expand=True)
         elif idx == 1:
             self.mcp_frame.pack(fill=tk.BOTH, expand=True)
-        else:
+        elif idx == 2:
             self.settings_frame.pack(fill=tk.BOTH, expand=True)
+        elif idx == 3:
+            self.permissions_frame.pack(fill=tk.BOTH, expand=True)
 
     def _build_prompt_tab(self):
         """Build System Prompt tab."""
@@ -1212,6 +1217,118 @@ class AgentConfigDialog:
             font=("Segoe UI", 7), bg=t["card_bg"], fg=t["fg_dim"]
         ).pack(anchor="w", pady=(16, 0))
 
+    def _build_permissions_tab(self):
+        """Build Permissions tab for agent."""
+        t = self.theme
+        self.permissions_frame = tk.Frame(self.content, bg=t["card_bg"])
+
+        # Load current permissions from agent
+        from .registry import PermissionConfig, PERMISSION_PRESETS, get_permission_preset
+        self.current_permissions = PermissionConfig()
+
+        if HAS_BACKEND and manager:
+            try:
+                from .registry import load_agent
+                agent_root = manager.get_agent_root()
+                agent = load_agent(agent_root, self.agent_data["id"])
+                self.current_permissions = agent.permissions
+            except Exception:
+                pass
+
+        # Preset selector
+        tk.Label(
+            self.permissions_frame, text="Permission Preset",
+            font=("Segoe UI", 9, "bold"), bg=t["card_bg"], fg=t["fg"]
+        ).pack(anchor="w", pady=(0, 6))
+
+        self.perm_preset_var = tk.StringVar(value=self.current_permissions.preset)
+        preset_frame = tk.Frame(self.permissions_frame, bg=t["btn_bg"])
+        preset_frame.pack(fill=tk.X, pady=(0, 12))
+
+        self.preset_buttons = []
+        for preset in ["default", "strict", "permissive", "custom"]:
+            btn = tk.Label(
+                preset_frame, text=preset.title(),
+                font=("Segoe UI", 8),
+                bg=t["accent"] if self.current_permissions.preset == preset else t["btn_bg"],
+                fg="#fff" if self.current_permissions.preset == preset else t["fg"],
+                padx=10, pady=4, cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 1))
+            btn.bind("<Button-1>", lambda e, p=preset, b=btn: self._select_preset(p, b))
+            self.preset_buttons.append(btn)
+
+        # Preset description
+        self.preset_desc = tk.Label(
+            self.permissions_frame, text="",
+            font=("Segoe UI", 7), bg=t["card_bg"], fg=t["fg_dim"],
+            wraplength=450, justify="left"
+        )
+        self.preset_desc.pack(anchor="w", pady=(0, 8))
+        self._update_preset_desc()
+
+        # Custom allow rules
+        tk.Label(
+            self.permissions_frame, text="Additional Allow Rules (one per line)",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(8, 2))
+
+        allow_frame = tk.Frame(self.permissions_frame, bg=t["btn_bg"], bd=1)
+        allow_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.allow_text = tk.Text(
+            allow_frame, height=4, font=("Consolas", 9),
+            bg=t["btn_bg"], fg=t["fg"], insertbackground=t["fg"],
+            relief="flat", bd=0, wrap="word"
+        )
+        self.allow_text.pack(fill=tk.X, padx=4, pady=4)
+        self.allow_text.insert("1.0", "\n".join(self.current_permissions.allow))
+
+        # Custom deny rules
+        tk.Label(
+            self.permissions_frame, text="Additional Deny Rules (one per line)",
+            font=("Segoe UI", 9), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(0, 2))
+
+        deny_frame = tk.Frame(self.permissions_frame, bg=t["btn_bg"], bd=1)
+        deny_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.deny_text = tk.Text(
+            deny_frame, height=3, font=("Consolas", 9),
+            bg=t["btn_bg"], fg=t["fg"], insertbackground=t["fg"],
+            relief="flat", bd=0, wrap="word"
+        )
+        self.deny_text.pack(fill=tk.X, padx=4, pady=4)
+        self.deny_text.insert("1.0", "\n".join(self.current_permissions.deny))
+
+        # Hint
+        tk.Label(
+            self.permissions_frame,
+            text="Permissions written to .claude/settings.json in project directory",
+            font=("Segoe UI", 7), bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(8, 0))
+
+    def _select_preset(self, preset: str, btn):
+        """Handle preset selection."""
+        t = self.theme
+        self.perm_preset_var.set(preset)
+        for b in self.preset_buttons:
+            b.configure(bg=t["btn_bg"], fg=t["fg"])
+        btn.configure(bg=t["accent"], fg="#fff")
+        self._update_preset_desc()
+
+    def _update_preset_desc(self):
+        """Update preset description."""
+        from .registry import PERMISSION_PRESETS
+        preset = self.perm_preset_var.get()
+        descriptions = {
+            "default": "Balanced permissions - read access, common dev tools (git, npm, pip, python), MCP servers. Blocks dangerous commands.",
+            "strict": "Minimal permissions - read-only, limited git (status/diff/log), grep/ls/cat only. No network tools.",
+            "permissive": "Full development access - read/write/edit, all dev tools, docker, process management. Only blocks destructive root commands.",
+            "custom": "Define your own allow/deny rules manually in the text fields below."
+        }
+        self.preset_desc.configure(text=descriptions.get(preset, ""))
+
     def _on_save(self):
         """Save all configuration to agent directory (per-agent isolation)."""
         import json
@@ -1262,6 +1379,33 @@ class AgentConfigDialog:
                 max_output_tokens=int(max_tokens_str) if max_tokens_str.isdigit() else None,
                 bash_timeout_ms=int(bash_timeout_str) if bash_timeout_str.isdigit() else None,
             )
+
+        # 5. Save permissions
+        if HAS_BACKEND and manager and hasattr(self, 'perm_preset_var'):
+            try:
+                from .registry import PermissionConfig, update_agent_permissions
+
+                # Parse allow/deny rules from text
+                allow_text = self.allow_text.get("1.0", tk.END).strip()
+                deny_text = self.deny_text.get("1.0", tk.END).strip()
+
+                allow_rules = [r.strip() for r in allow_text.split("\n") if r.strip()]
+                deny_rules = [r.strip() for r in deny_text.split("\n") if r.strip()]
+
+                perm_config = PermissionConfig(
+                    preset=self.perm_preset_var.get(),
+                    allow=allow_rules,
+                    deny=deny_rules
+                )
+
+                # Update agent and write .claude/settings.json
+                agent_root = manager.get_agent_root()
+                update_agent_permissions(agent_root, self.agent_data["id"], perm_config)
+                print(f"Permissions saved to .claude/settings.json")
+            except Exception as e:
+                print(f"Error saving permissions: {e}")
+                import traceback
+                traceback.print_exc()
 
         # Call save callback
         if self.on_save:
