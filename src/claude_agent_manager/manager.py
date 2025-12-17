@@ -52,6 +52,7 @@ class AgentStatus:
     use_browser: bool
     project_path: str
     proxy: Optional[dict] = None  # Proxy config as dict for serialization
+    display_name: Optional[str] = None  # Custom display name
 
 
 def get_agent_root(cfg: Optional[AppConfig] = None) -> Path:
@@ -420,6 +421,32 @@ def update_proxy(agent_id: str, proxy: ProxyConfig, cfg: Optional[AppConfig] = N
     return updated
 
 
+def update_display_name(agent_id: str, display_name: Optional[str], cfg: Optional[AppConfig] = None) -> AgentRecord:
+    """
+    Update display name for an agent.
+
+    Args:
+        agent_id: The agent ID
+        display_name: New display name (None to reset to purpose)
+        cfg: Optional config
+
+    Returns:
+        Updated AgentRecord
+    """
+    if cfg is None:
+        cfg = load_config()
+
+    agent_root = get_agent_root(cfg)
+    agent = load_agent(agent_root, agent_id)
+
+    updated = agent.model_copy()
+    updated.display_name = display_name if display_name else None
+    save_agent(agent_root, updated)
+
+    logger.info(f"[AGENT] update_display_name | id={agent_id} display_name={display_name}")
+    return updated
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # STATUS & LISTING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -446,6 +473,7 @@ def get_status(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentStatus:
         viewer_running=is_pid_running(agent.viewer_pid),
         use_browser=agent.use_browser,
         project_path=agent.project_path,
+        display_name=agent.display_name,
     )
 
 
@@ -474,6 +502,7 @@ def list_agents(cfg: Optional[AppConfig] = None) -> List[AgentStatus]:
             use_browser=agent.use_browser,
             project_path=agent.project_path,
             proxy=agent.proxy.model_dump() if agent.proxy else None,
+            display_name=agent.display_name,
         ))
 
     return result

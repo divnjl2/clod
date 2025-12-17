@@ -4,11 +4,28 @@ import os
 import random
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
+
+# Force UTF-8 encoding on Windows console to support Cyrillic
+if sys.platform == "win32":
+    try:
+        # Set console code page to UTF-8
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+        # Reconfigure stdout/stderr to use UTF-8
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass  # Silently ignore if it fails
+
 from rich.table import Table
 
 from .config import AppConfig, load_config, save_config

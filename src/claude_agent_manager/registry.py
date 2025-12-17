@@ -44,6 +44,7 @@ class AgentConfigOptions(BaseModel):
 class AgentRecord(BaseModel):
     id: str
     purpose: str
+    display_name: Optional[str] = None  # Custom display name (falls back to purpose if None)
     project_path: str
     port: int
     pm2_name: str
@@ -53,6 +54,10 @@ class AgentRecord(BaseModel):
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     config: AgentConfigOptions = Field(default_factory=AgentConfigOptions)
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+    def get_display_name(self) -> str:
+        """Get display name, falling back to purpose if not set."""
+        return self.display_name if self.display_name else self.purpose
 
 
 def agent_dir(agent_root: Path, agent_id: str) -> Path:

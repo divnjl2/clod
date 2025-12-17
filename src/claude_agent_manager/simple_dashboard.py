@@ -501,7 +501,13 @@ class AgentSettingsPanel(tk.Frame):
 
         self.title_lbl.configure(text=f"{agent_data['id'][:10]}")
         self.agent_id_lbl.configure(text=agent_data['id'])
-        self.purpose_lbl.configure(text=agent_data["purpose"])
+        # Show display_name with fallback to purpose + pencil (editable on click)
+        name = agent_data.get("display_name") or agent_data["purpose"]
+        self.purpose_lbl.configure(text=f"{name} ✎", cursor="hand2")
+        self.purpose_lbl.bind("<Button-1>", self._on_name_click)
+        # Hover: subtle highlight
+        self.purpose_lbl.bind("<Enter>", lambda e: self.purpose_lbl.configure(fg=self.theme["accent"]))
+        self.purpose_lbl.bind("<Leave>", lambda e: self.purpose_lbl.configure(fg=self.theme["fg"]))
 
         status = agent_data["status"]
         status_color = t["online"] if status == "online" else t["offline"]
@@ -535,6 +541,104 @@ class AgentSettingsPanel(tk.Frame):
     def _on_action(self, action: str):
         if action in self.callbacks and self.agent_data:
             self.callbacks[action](self.agent_data)
+
+    def _on_name_click(self, event=None):
+        """Inline edit: replace label with entry field."""
+        if not self.agent_data or getattr(self, '_editing_name', False):
+            return
+
+        self._editing_name = True
+        t = self.theme
+
+        # Get current display text
+        current_name = self.agent_data.get("display_name") or self.agent_data["purpose"]
+
+        # Hide label
+        self.purpose_lbl.pack_forget()
+
+        # Create inline entry (same position as label)
+        self._name_entry = tk.Entry(
+            self.info_frame,
+            font=("Segoe UI", 9),
+            bg=t["btn_bg"],
+            fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=t["accent"],
+            highlightcolor=t["accent"]
+        )
+        self._name_entry.insert(0, current_name)
+        self._name_entry.pack(anchor="w", fill=tk.X, pady=(2, 0), ipady=2)
+        self._name_entry.focus_set()
+        self._name_entry.select_range(0, tk.END)
+
+        def save_name(event=None):
+            if not getattr(self, '_editing_name', False):
+                return
+            new_name = self._name_entry.get().strip()
+            # If same as purpose, treat as empty (use purpose as display)
+            if new_name == self.agent_data["purpose"]:
+                new_name = None
+            else:
+                new_name = new_name or None
+
+            try:
+                manager.update_display_name(self.agent_data["id"], new_name)
+                self.agent_data["display_name"] = new_name
+            except Exception as e:
+                print(f"Error updating name: {e}")
+
+            self._finish_editing()
+            # Refresh to update card list
+            if "refresh" in self.callbacks:
+                self.callbacks["refresh"](None)
+
+        def cancel_edit(event=None):
+            self._finish_editing()
+
+        self._name_entry.bind("<Return>", save_name)
+        self._name_entry.bind("<Escape>", cancel_edit)
+
+        # Global click handler to save when clicking outside
+        def on_global_click(event):
+            if not getattr(self, '_editing_name', False):
+                return
+            try:
+                if event.widget != self._name_entry:
+                    save_name()
+            except:
+                pass
+
+        self._global_click_id = self.winfo_toplevel().bind("<Button-1>", on_global_click, "+")
+
+    def _finish_editing(self):
+        """Restore label after inline edit."""
+        if not getattr(self, '_editing_name', False):
+            return
+
+        self._editing_name = False  # Set first to prevent re-entry
+
+        # Unbind global click handler
+        if hasattr(self, '_global_click_id') and self._global_click_id:
+            try:
+                self.winfo_toplevel().unbind("<Button-1>", self._global_click_id)
+            except:
+                pass
+            self._global_click_id = None
+
+        if hasattr(self, '_name_entry') and self._name_entry:
+            try:
+                self._name_entry.destroy()
+            except:
+                pass
+            self._name_entry = None
+
+        # Show label again with updated text + pencil
+        name = self.agent_data.get("display_name") or self.agent_data["purpose"]
+        self.purpose_lbl.configure(text=f"{name} ✎", font=("Segoe UI", 9))
+        self.purpose_lbl.pack(anchor="w", pady=(2, 0))
 
     def update_theme(self, theme: Dict):
         self.theme = theme
@@ -986,6 +1090,7 @@ class AgentCard(tk.Frame):
         theme: Dict,
         on_click: Callable,
         on_toggle: Callable,
+        on_name_change: Optional[Callable] = None,
         **kwargs
     ):
         super().__init__(parent, **kwargs)
@@ -993,6 +1098,8 @@ class AgentCard(tk.Frame):
         self.theme = theme
         self.on_click_cb = on_click
         self.on_toggle_cb = on_toggle
+        self.on_name_change_cb = on_name_change
+        self._editing_name = False
 
         self._build_ui()
         self._bind_events()
@@ -1024,9 +1131,10 @@ class AgentCard(tk.Frame):
         self.id_lbl = tk.Label(self.top, text=short_id, font=("Segoe UI Semibold", 9), bg=t["card_bg"], fg=t["fg"])
         self.id_lbl.pack(side=tk.LEFT)
 
-        # Purpose
-        purpose = agent["purpose"][:22] + "..." if len(agent["purpose"]) > 22 else agent["purpose"]
-        self.purpose_lbl = tk.Label(self.left, text=purpose, font=("Segoe UI", 8), bg=t["card_bg"], fg=t["fg_dim"])
+        # Purpose / Display name (with edit icon)
+        name = agent.get("display_name") or agent["purpose"]
+        name_truncated = name[:20] + "..." if len(name) > 20 else name
+        self.purpose_lbl = tk.Label(self.left, text=f"{name_truncated} ✎", font=("Segoe UI", 8), bg=t["card_bg"], fg=t["fg_dim"], cursor="hand2")
         self.purpose_lbl.pack(anchor="w", pady=(1, 0))
 
         # Port + Memory indicator
@@ -1064,10 +1172,14 @@ class AgentCard(tk.Frame):
         for w in self._widgets:
             w.bind("<Enter>", self._on_enter)
             w.bind("<Leave>", self._on_leave)
-            w.bind("<Button-1>", self._on_card_click)
+            # Don't bind card click to purpose_lbl - it has its own click handler
+            if w != self.purpose_lbl:
+                w.bind("<Button-1>", self._on_card_click)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_card_click)
+        # Single click on name to edit
+        self.purpose_lbl.bind("<Button-1>", self._on_name_click)
 
     def _on_enter(self, event=None):
         t = self.theme
@@ -1098,6 +1210,114 @@ class AgentCard(tk.Frame):
 
     def _do_toggle(self):
         self.on_toggle_cb(self.agent_data["id"], self.agent_data["status"])
+
+    def _on_name_click(self, event=None):
+        """Inline edit name on click."""
+        if self._editing_name or not self.on_name_change_cb:
+            return
+        self._editing_name = True
+        t = self.theme
+
+        # Get current name
+        current_name = self.agent_data.get("display_name") or self.agent_data["purpose"]
+
+        # Hide label
+        self.purpose_lbl.pack_forget()
+
+        # Create entry
+        self._name_entry = tk.Entry(
+            self.left,
+            font=("Segoe UI", 8),
+            bg=t["btn_bg"],
+            fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=t["accent"],
+            highlightcolor=t["accent"],
+            width=20
+        )
+        self._name_entry.insert(0, current_name)
+        self._name_entry.pack(anchor="w", pady=(1, 0))
+        self._name_entry.focus_set()
+        self._name_entry.select_range(0, tk.END)
+
+        def save_name(event=None):
+            if not self._editing_name:
+                return
+            new_name = self._name_entry.get().strip()
+            if new_name == self.agent_data["purpose"]:
+                new_name = None
+            else:
+                new_name = new_name or None
+
+            # Finish editing FIRST (before callback destroys card)
+            self._finish_card_editing()
+
+            try:
+                manager.update_display_name(self.agent_data["id"], new_name)
+                self.agent_data["display_name"] = new_name
+                if self.on_name_change_cb:
+                    self.on_name_change_cb()
+            except Exception as e:
+                print(f"Error updating name: {e}")
+
+        def cancel_edit(event=None):
+            self._finish_card_editing()
+
+        self._name_entry.bind("<Return>", save_name)
+        self._name_entry.bind("<Escape>", cancel_edit)
+
+        # Global click handler to save when clicking outside
+        def on_global_click(event):
+            if not self._editing_name:
+                return
+            # Check if click is outside the entry
+            try:
+                widget = event.widget
+                if widget != self._name_entry:
+                    save_name()
+            except:
+                pass
+
+        # Bind to root window
+        self._global_click_id = self.winfo_toplevel().bind("<Button-1>", on_global_click, "+")
+        self._save_func = save_name  # Store for cleanup
+
+        # Prevent event propagation to card click
+        return "break"
+
+    def _finish_card_editing(self):
+        """Restore label after edit."""
+        if not self._editing_name:
+            return
+
+        self._editing_name = False  # Set first to prevent re-entry
+
+        # Unbind global click handler
+        if hasattr(self, '_global_click_id') and self._global_click_id:
+            try:
+                self.winfo_toplevel().unbind("<Button-1>", self._global_click_id)
+            except:
+                pass
+            self._global_click_id = None
+
+        if hasattr(self, '_name_entry') and self._name_entry:
+            try:
+                self._name_entry.destroy()
+            except:
+                pass
+            self._name_entry = None
+
+        # Restore label with pencil (may fail if card destroyed)
+        try:
+            name = self.agent_data.get("display_name") or self.agent_data["purpose"]
+            name_truncated = name[:20] + "..." if len(name) > 20 else name
+            self.purpose_lbl.configure(text=f"{name_truncated} ✎")
+            self.purpose_lbl.pack(anchor="w", pady=(1, 0))
+        except:
+            pass  # Widget may have been destroyed
 
     def update_theme(self, theme: Dict):
         self.theme = theme
@@ -1458,9 +1678,11 @@ class AgentDashboard:
                 agents = manager.list_agents()
                 for agent in agents:
                     status = "online" if agent.worker_online else "offline"
+                    display_name = getattr(agent, 'display_name', None)
                     data.append({
                         "id": agent.id,
                         "purpose": agent.purpose,
+                        "display_name": display_name,
                         "port": agent.port,
                         "status": status,
                         "pm2_name": f"agent-{agent.id}",
@@ -1479,8 +1701,29 @@ class AgentDashboard:
 
     def _load_agents(self):
         """Full load (initial or forced)."""
+        # Remember selected agent to refresh settings panel
+        selected_id = None
+        if self.settings_visible and self.settings_panel.agent_data:
+            selected_id = self.settings_panel.agent_data.get("id")
+
         self.agents_data = self._fetch_agents_data()
         self._render()
+
+        # Refresh settings panel if it was showing an agent
+        if selected_id and self.settings_visible:
+            for agent in self.agents_data:
+                if agent["id"] == selected_id:
+                    callbacks = {
+                        "configure": self._configure_claude,
+                        "memory": self._open_memory_viewer,
+                        "restart_memory": self._restart_memory,
+                        "proxy": self._configure_proxy,
+                        "logs": self._view_logs,
+                        "delete": self._delete_agent,
+                        "refresh": lambda _: self._load_agents(),
+                    }
+                    self.settings_panel.show(agent, callbacks)
+                    break
 
     def _get_demo_data(self) -> List[Dict]:
         # No demo data - show empty state for first launch
@@ -1656,13 +1899,38 @@ class AgentDashboard:
                 agent_data=agent,
                 theme=t,
                 on_click=self._show_settings,
-                on_toggle=self._toggle_agent
+                on_toggle=self._toggle_agent,
+                on_name_change=self._sync_settings_panel  # Sync panel only, no card rebuild
             )
             card.grid(row=row, column=col, padx=2, pady=2, sticky="nsew")
             self.agent_cards.append(card)
 
         for c in range(cols):
             self.agents_frame.columnconfigure(c, weight=1)
+
+    def _sync_settings_panel(self):
+        """Sync settings panel with current card data (no full reload)."""
+        if not self.settings_visible or not self.settings_panel.agent_data:
+            return
+
+        selected_id = self.settings_panel.agent_data.get("id")
+        if not selected_id:
+            return
+
+        # Find updated data from cards (they already have fresh data)
+        for card in self.agent_cards:
+            if card.agent_data.get("id") == selected_id:
+                callbacks = {
+                    "configure": self._configure_claude,
+                    "memory": self._open_memory_viewer,
+                    "restart_memory": self._restart_memory,
+                    "proxy": self._configure_proxy,
+                    "logs": self._view_logs,
+                    "delete": self._delete_agent,
+                    "refresh": lambda _: self._load_agents(),
+                }
+                self.settings_panel.show(card.agent_data, callbacks)
+                break
 
     def _create_agent(self):
         """Show themed dialog to create new agent."""
@@ -1802,6 +2070,7 @@ class AgentDashboard:
             "proxy": self._configure_proxy,
             "logs": self._view_logs,
             "delete": self._delete_agent,
+            "refresh": lambda _: self._load_agents(),  # Refresh on name change
         }
         self.settings_panel.show(agent_data, callbacks)
         self._slide_in_settings()
