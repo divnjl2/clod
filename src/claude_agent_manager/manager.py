@@ -29,6 +29,7 @@ from .processes import (
 from .registry import AgentConfigOptions, AgentRecord, ProxyConfig, iter_agents, load_agent, save_agent
 from .agent_config import (
     apply_agent_config,
+    build_default_mcp_servers,
     get_agent_env_vars,
     build_env_lines,
     sync_agent_config_to_project,
@@ -198,8 +199,17 @@ def create_agent(
     # 0) Save agent config files to agent_dir (per-agent isolation)
     if config.system_prompt:
         write_agent_local_claude_md(agent_dir, config.system_prompt)
-    if config.mcp_servers:
-        write_agent_local_mcp_json(agent_dir, {"mcpServers": config.mcp_servers})
+
+    # Build MCP servers config - use provided or generate defaults
+    mcp_servers = config.mcp_servers
+    if not mcp_servers:
+        # Generate default MCP stack with memory server
+        mcp_servers = build_default_mcp_servers(
+            port=port,
+            data_dir=agent_dir,
+            claude_mem_root=cfg.claude_mem_root
+        )
+    write_agent_local_mcp_json(agent_dir, {"mcpServers": mcp_servers})
 
     # 0.1) Sync config files from agent_dir to project
     sync_agent_config_to_project(agent_dir, project)

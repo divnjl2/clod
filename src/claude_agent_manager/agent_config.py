@@ -26,8 +26,44 @@ DEFAULT_MCP_SERVERS = {
         "type": "stdio",
         "command": "npx",
         "args": ["-y", "@anthropic/sequential-thinking-server"]
+    },
+    "filesystem": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@anthropic/filesystem-server"]
     }
 }
+
+
+def build_default_mcp_servers(port: int, data_dir: Path, claude_mem_root: Optional[str] = None) -> dict:
+    """
+    Build default MCP servers config for an agent.
+
+    Args:
+        port: Agent's memory worker port
+        data_dir: Agent's data directory
+        claude_mem_root: Path to claude-mem installation (for memory MCP)
+
+    Returns:
+        MCP servers configuration dict
+    """
+    servers = dict(DEFAULT_MCP_SERVERS)
+
+    # Add memory MCP if claude-mem is configured
+    if claude_mem_root:
+        mcp_server_path = Path(claude_mem_root) / "plugin" / "scripts" / "mcp-server.cjs"
+        if mcp_server_path.exists():
+            servers["claude-mem"] = {
+                "type": "stdio",
+                "command": "node",
+                "args": [str(mcp_server_path).replace("\\", "/")],
+                "env": {
+                    "CLAUDE_MEM_WORKER_PORT": str(port),
+                    "CLAUDE_MEM_DATA_DIR": str(data_dir).replace("\\", "/")
+                }
+            }
+
+    return servers
 
 DEFAULT_CLAUDE_SETTINGS = {
     "permissions": {
