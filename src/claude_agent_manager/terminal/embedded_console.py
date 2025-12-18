@@ -53,6 +53,8 @@ if sys.platform == "win32":
     INPUT_KEYBOARD = 1
     KEYEVENTF_KEYUP = 0x0002
     KEYEVENTF_UNICODE = 0x0004
+    KEYEVENTF_SCANCODE = 0x0008
+    KEYEVENTF_EXTENDEDKEY = 0x0001
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
@@ -63,13 +65,39 @@ if sys.platform == "win32":
             ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
         ]
 
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+
+    class HARDWAREINPUT(ctypes.Structure):
+        _fields_ = [
+            ("uMsg", wintypes.DWORD),
+            ("wParamL", wintypes.WORD),
+            ("wParamH", wintypes.WORD),
+        ]
+
+    class INPUT_UNION(ctypes.Union):
+        _fields_ = [
+            ("ki", KEYBDINPUT),
+            ("mi", MOUSEINPUT),
+            ("hi", HARDWAREINPUT),
+        ]
+
     class INPUT(ctypes.Structure):
-        class _INPUT(ctypes.Union):
-            _fields_ = [("ki", KEYBDINPUT)]
         _fields_ = [
             ("type", wintypes.DWORD),
-            ("_input", _INPUT),
+            ("union", INPUT_UNION),
         ]
+
+    # Setup SendInput function
+    user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+    user32.SendInput.restype = wintypes.UINT
 
     # Virtual key codes
     VK_MAP = {
@@ -83,6 +111,9 @@ if sys.platform == "win32":
         'Shift_L': 0x10, 'Shift_R': 0x10, 'Control_L': 0x11, 'Control_R': 0x11,
         'Alt_L': 0x12, 'Alt_R': 0x12,
     }
+
+    # Extended keys that need KEYEVENTF_EXTENDEDKEY flag
+    EXTENDED_KEYS = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E}  # PageUp/Down, Home/End, Arrows, Ins, Del
 
 
 class EmbeddedConsole(tk.Frame):
@@ -464,31 +495,69 @@ class EmbeddedConsole(tk.Frame):
         toplevel.bind("<Key>", self._forward_key)
         toplevel.bind("<KeyRelease>", self._forward_key_release)
 
+    def _send_key_input(self, vk: int, key_up: bool = False) -> None:
+        """Send a key using SendInput API."""
+        # Create INPUT structure
+        inp = INPUT()
+        inp.type = INPUT_KEYBOARD
+        inp.union.ki.wVk = vk
+        inp.union.ki.wScan = user32.MapVirtualKeyW(vk, 0)
+        inp.union.ki.time = 0
+        inp.union.ki.dwExtraInfo = None
+
+        # Set flags
+        flags = 0
+        if vk in EXTENDED_KEYS:
+            flags |= KEYEVENTF_EXTENDEDKEY
+        if key_up:
+            flags |= KEYEVENTF_KEYUP
+        inp.union.ki.dwFlags = flags
+
+        # Send the input
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+    def _send_unicode_char(self, char: str) -> None:
+        """Send a unicode character using SendInput."""
+        if not char or len(char) != 1:
+            return
+
+        code = ord(char)
+
+        # Key down
+        inp = INPUT()
+        inp.type = INPUT_KEYBOARD
+        inp.union.ki.wVk = 0
+        inp.union.ki.wScan = code
+        inp.union.ki.dwFlags = KEYEVENTF_UNICODE
+        inp.union.ki.time = 0
+        inp.union.ki.dwExtraInfo = None
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+        # Key up
+        inp.union.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
     def _forward_key(self, event) -> str:
-        """Forward key press to embedded console."""
+        """Forward key press to embedded console using SendInput."""
         if not self.console_hwnd or not self.running:
             return ""
+
+        # Skip modifier-only keys
+        if event.keysym in ('Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R'):
+            return ""
+
         try:
-            # First ensure console has focus
+            # Ensure console window has focus first
+            user32.SetForegroundWindow(self.winfo_toplevel().winfo_id())
             user32.SetFocus(self.console_hwnd)
 
-            # Get virtual key code
-            vk = None
+            # Check for special keys
             if event.keysym in VK_MAP:
                 vk = VK_MAP[event.keysym]
-            elif len(event.char) == 1:
-                # For regular characters, use VkKeyScan
-                vk = user32.VkKeyScanW(ord(event.char)) & 0xFF
-
-            if vk:
-                # Send key down using PostMessage for better reliability
-                scan = user32.MapVirtualKeyW(vk, 0)
-                lparam = (scan << 16) | 1
-                user32.PostMessageW(self.console_hwnd, WM_KEYDOWN, vk, lparam)
-
-                # For printable chars, also send WM_CHAR
-                if event.char and len(event.char) == 1 and ord(event.char) >= 32:
-                    user32.PostMessageW(self.console_hwnd, WM_CHAR, ord(event.char), lparam)
+                self._send_key_input(vk, key_up=False)
+            elif event.char and len(event.char) == 1 and ord(event.char) >= 32:
+                # For printable characters, use unicode input
+                self._send_unicode_char(event.char)
 
             return "break"  # Prevent Tkinter from processing
         except Exception as e:
@@ -499,17 +568,16 @@ class EmbeddedConsole(tk.Frame):
         """Forward key release to embedded console."""
         if not self.console_hwnd or not self.running:
             return ""
+
+        # Skip modifier-only keys and regular chars (unicode handles both down+up)
+        if event.keysym in ('Shift_L', 'Shift_R', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R'):
+            return ""
+
         try:
-            vk = None
+            # Only send key up for special keys
             if event.keysym in VK_MAP:
                 vk = VK_MAP[event.keysym]
-            elif len(event.char) == 1:
-                vk = user32.VkKeyScanW(ord(event.char)) & 0xFF
-
-            if vk:
-                scan = user32.MapVirtualKeyW(vk, 0)
-                lparam = (scan << 16) | 1 | (1 << 30) | (1 << 31)  # Key up flags
-                user32.PostMessageW(self.console_hwnd, WM_KEYUP, vk, lparam)
+                self._send_key_input(vk, key_up=True)
 
             return "break"
         except:
