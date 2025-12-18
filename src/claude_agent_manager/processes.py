@@ -127,16 +127,24 @@ def spawn_cmd(project_path: str, port: int) -> Optional[int]:
     return p.pid
 
 
-def spawn_cmd_window(cmd_script: Path, workdir: Optional[str] = None) -> int:
+def spawn_cmd_window(cmd_script: Path, workdir: Optional[str] = None, env: Optional[dict[str, str]] = None) -> int:
     p = subprocess.Popen(
         ["cmd.exe", "/k", str(cmd_script)],
         cwd=workdir,
+        env=env,
         creationflags=CREATE_NEW_CONSOLE,
     )
     return p.pid
 
 
-def spawn_browser(url: str, browser: str, agent_id: Optional[str] = None, *, headless: bool = False) -> Optional[int]:
+def spawn_browser(
+    url: str,
+    browser: str,
+    agent_id: Optional[str] = None,
+    *,
+    headless: bool = False,
+    profiles_root: Optional[Path] = None,
+) -> Optional[int]:
     """
     Spawn browser window for viewer.
     Each agent gets its own isolated browser profile via --user-data-dir.
@@ -145,7 +153,8 @@ def spawn_browser(url: str, browser: str, agent_id: Optional[str] = None, *, hea
 
     # Unique profile dir per agent for true isolation
     profile_name = agent_id or f"viewer-{os.getpid()}"
-    profile_dir = Path.home() / ".claude-agents" / "browser-profiles" / profile_name
+    profile_base = profiles_root or (Path.home() / ".claude-agents" / "browser-profiles")
+    profile_dir = profile_base / profile_name
 
     if b == "default":
         subprocess.Popen(["cmd.exe", "/c", "start", "", url], creationflags=CREATE_NEW_CONSOLE)
