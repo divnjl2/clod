@@ -15,8 +15,9 @@ def pick_port(cfg: AppConfig, used: set[int]) -> int:
     raise RuntimeError("Unable to pick a free port from the configured range.")
 
 
-def start_worker(cfg: AppConfig, pm2_name: str, port: int, data_dir: Path) -> None:
+def start_worker(cfg: AppConfig, pm2_name: str, port: int, data_dir: Path, base_env: dict[str, str] | None = None) -> None:
     env = {
+        **(base_env or {}),
         "CLAUDE_MEM_WORKER_PORT": str(port),
         "CLAUDE_MEM_DATA_DIR": str(data_dir),
     }

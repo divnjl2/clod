@@ -170,6 +170,7 @@ class AgentRecord(BaseModel):
     config: AgentConfigOptions = Field(default_factory=AgentConfigOptions)
     permissions: PermissionConfig = Field(default_factory=PermissionConfig)
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    active_run_id: Optional[str] = None
 
     def get_display_name(self) -> str:
         """Get display name, falling back to purpose if not set."""

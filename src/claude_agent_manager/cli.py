@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import random
 import shutil
 import subprocess
 import sys
@@ -28,7 +27,9 @@ if sys.platform == "win32":
 
 from rich.table import Table
 
+from . import manager
 from .config import AppConfig, load_config, save_config
+from .core.paths import create_workspace_paths
 from .processes import (
     is_pid_running,
     kill_tree,
@@ -40,7 +41,6 @@ from .processes import (
 )
 from .registry import AgentRecord, iter_agents, load_agent, save_agent
 from .tile import tile_two_in_cell
-from .worker import pick_port, start_worker
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
@@ -66,9 +66,8 @@ def _dpi_awareness() -> None:
 
 
 def _agent_root(cfg: AppConfig) -> Path:
-    p = Path(cfg.agent_root)
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    paths = create_workspace_paths(Path(cfg.agent_root))
+    return paths.agents_dir
 
 
 def _write_run_cmd(agent_dir: Path, title: str, port: int, data_dir: Path, project_path: Path) -> Path:
@@ -233,51 +232,15 @@ def new(
     # Auto-check and install all dependencies (silent if ok)
     _ensure_all_dependencies(cfg)
 
-    agent_root = _agent_root(cfg)
-    used_ports = {a.port for a in iter_agents(agent_root)}
-    if port is None:
-        port = pick_port(cfg, used_ports)
-
-    if agent_id is None:
-        agent_id = f"{random.randint(1000, 9999)}-{port}"
-
-    agent_dir = agent_root / agent_id
-    agent_dir.mkdir(parents=True, exist_ok=True)
-
-    pm2_name = f"agent-{agent_id}"
-    if pm2_exists(pm2_name):
-        raise RuntimeError(f"Agent already exists in pm2: {pm2_name}")
-
-    project_path = Path(project).resolve()
-    if not project_path.exists():
-        raise FileNotFoundError(f"Project path not found: {project_path}")
-
-    # 1) worker (pm2)
-    start_worker(cfg, pm2_name=pm2_name, port=port, data_dir=agent_dir)
-
-    # 2) viewer (если start_browser=True)
-    viewer_pid = None
-    if start_browser:
-        url = f"http://localhost:{port}"
-        viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent_id, headless=True)
-
-    # 3) claude cmd window (env MUST match worker)
-    title = f"{purpose} | :{port}"
-    run_cmd = _write_run_cmd(agent_dir, title=title, port=port, data_dir=agent_dir, project_path=project_path)
-    cmd_pid = spawn_cmd_window(run_cmd, workdir=str(project_path))
-
-    rec = AgentRecord(
-        id=agent_id,
+    rec = manager.create_agent(
         purpose=purpose,
-        project_path=str(project_path),
+        project_path=project,
+        agent_id=agent_id,
         port=port,
-        pm2_name=pm2_name,
-        cmd_pid=cmd_pid,
-        viewer_pid=viewer_pid,
         use_browser=start_browser,
+        cfg=cfg,
     )
-    save_agent(agent_root, rec)
-    console.print(f"Created agent: {agent_id} (port={port})")
+    console.print(f"Created agent: {rec.id} (port={rec.port})")
 
 
 @app.command()
@@ -321,7 +284,8 @@ def open_browser(
         return
 
     url = f"http://localhost:{a.port}"
-    viewer_pid = spawn_browser(url, cfg.browser, agent_id=a.id, headless=True)
+    profile_root = _agent_root(cfg) / agent_id / "browser-profiles"
+    viewer_pid = spawn_browser(url, cfg.browser, agent_id=a.id, headless=True, profiles_root=profile_root)
 
     # Update agent record with new viewer PID
     updated = a.model_copy()
@@ -338,20 +302,7 @@ def stop(
 ) -> None:
     """Остановить конкретного агента."""
     cfg = load_config()
-    agent_root = _agent_root(cfg)
-    a = load_agent(agent_root, agent_id)
-
-    pm2_delete(a.pm2_name)
-
-    if a.cmd_pid and is_pid_running(a.cmd_pid):
-        kill_tree(a.cmd_pid)
-
-    if a.viewer_pid and is_pid_running(a.viewer_pid):
-        kill_tree(a.viewer_pid)
-
-    if purge:
-        shutil.rmtree(agent_root / agent_id, ignore_errors=True)
-
+    manager.stop_agent(agent_id, purge=purge, cfg=cfg)
     console.print(f"Stopped agent: {agent_id}")
 
 
@@ -364,21 +315,9 @@ def stop_all(
     agent_root = _agent_root(cfg)
     for a in iter_agents(agent_root):
         try:
-            pm2_delete(a.pm2_name)
+            manager.stop_agent(a.id, purge=purge, cfg=cfg)
         except Exception:
-            pass
-        if a.cmd_pid and is_pid_running(a.cmd_pid):
-            try:
-                kill_tree(a.cmd_pid)
-            except Exception:
-                pass
-        if a.viewer_pid and is_pid_running(a.viewer_pid):
-            try:
-                kill_tree(a.viewer_pid)
-            except Exception:
-                pass
-        if purge:
-            shutil.rmtree(agent_root / a.id, ignore_errors=True)
+            continue
 
     console.print("Stopped all agents")
 
@@ -394,26 +333,7 @@ def open(
     cfg.validate_ready()
     _ensure_prereqs()
 
-    agent_root = _agent_root(cfg)
-    a = load_agent(agent_root, agent_id)
-    agent_dir = agent_root / agent_id
-
-    updated = a.model_copy()
-
-    if reopen_viewer and a.use_browser:
-        url = f"http://localhost:{a.port}"
-        updated.viewer_pid = spawn_browser(url, cfg.browser, agent_id=a.id, headless=True)
-    elif reopen_viewer and not a.use_browser:
-        console.print(f"[yellow]Agent {agent_id} is headless; viewer is not required.[/yellow]")
-
-    if reopen_claude:
-        title = f"{a.purpose} | :{a.port}"
-        run_cmd = agent_dir / "run.cmd"
-        if not run_cmd.exists():
-            run_cmd = _write_run_cmd(agent_dir, title=title, port=a.port, data_dir=agent_dir, project_path=Path(a.project_path))
-        updated.cmd_pid = spawn_cmd_window(run_cmd, workdir=a.project_path)
-
-    save_agent(agent_root, updated)
+    manager.start_agent(agent_id, cfg=cfg, skip_cmd=not reopen_claude, force_viewer=reopen_viewer)
     console.print(f"Opened agent windows: {agent_id}")
 
 

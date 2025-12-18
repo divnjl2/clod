@@ -11,7 +11,9 @@ import logging
 import os
 import random
 import shutil
+import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 
@@ -26,6 +28,11 @@ from .processes import (
     spawn_cmd_window,
     which,
 )
+from .core import WorkspacePaths, atomic_write_json, create_workspace_paths, ensure_dir
+from .core.locks import FileLock
+from .core.models import AgentSpec, RunSpec
+from .core.registry import Registry
+from .core.runner_env import RunnerEnv, build_run_sandbox_env
 from .registry import AgentConfigOptions, AgentRecord, ProxyConfig, iter_agents, load_agent, save_agent
 from .agent_config import (
     apply_agent_config,
@@ -57,12 +64,16 @@ class AgentStatus:
 
 
 def get_agent_root(cfg: Optional[AppConfig] = None) -> Path:
-    """Get the agent root directory, creating if needed."""
+    """Get the agents directory within the workspace, creating if needed."""
+    return get_workspace_paths(cfg).agents_dir
+
+
+def get_workspace_paths(cfg: Optional[AppConfig] = None) -> WorkspacePaths:
+    """Build workspace paths rooted at configured agent_root."""
     if cfg is None:
         cfg = load_config()
-    p = Path(cfg.agent_root)
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    paths = create_workspace_paths(Path(cfg.agent_root))
+    return paths
 
 
 def _write_run_cmd(
@@ -72,7 +83,9 @@ def _write_run_cmd(
     data_dir: Path,
     project_path: Path,
     proxy: Optional[ProxyConfig] = None,
-    config: Optional[AgentConfigOptions] = None
+    config: Optional[AgentConfigOptions] = None,
+    runner_env: Optional[RunnerEnv] = None,
+    workdir: Optional[Path] = None,
 ) -> Path:
     """Write the run.cmd script for an agent."""
     run_cmd = agent_dir / "run.cmd"
@@ -104,15 +117,35 @@ def _write_run_cmd(
     # Escape special chars in title for cmd
     safe_title = title.replace("|", "^|").replace("&", "^&")
 
+    env_lines = ""
+    merged_env = {}
+    if runner_env:
+        for key in (
+            "HOME",
+            "XDG_CACHE_HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "AGENT_RUN_DIR",
+            "AGENT_HOME",
+        ):
+            if key in runner_env.env:
+                merged_env[key] = runner_env.env[key]
+    if merged_env:
+        env_lines = "".join(f'set "{k}={v}"\n' for k, v in merged_env.items())
+
     content = (
         "@echo off\n"
         "chcp 65001 >nul 2>&1\n"
         f"title {safe_title}\n"
+        f"{env_lines}"
         f"set CLAUDE_MEM_WORKER_PORT={port}\n"
         f"set CLAUDE_MEM_DATA_DIR={data_dir}\n"
         f"{proxy_lines}"
         f"{config_lines}"
-        f"cd /d \"{project_path}\"\n"
+        f"cd /d \"{workdir if workdir else project_path}\"\n"
         "claude\n"
     )
     run_cmd.write_text(content, encoding="utf-8")
@@ -124,6 +157,22 @@ def _ensure_npm_path() -> None:
     npm_bin = Path(os.getenv("APPDATA", "")) / "npm"
     if str(npm_bin) not in os.getenv("PATH", ""):
         os.environ["PATH"] = str(npm_bin) + os.pathsep + os.environ.get("PATH", "")
+
+
+def _registry(cfg: AppConfig) -> Registry:
+    paths = get_workspace_paths(cfg)
+    reg = Registry(paths.registry_path)
+    reg.init()
+    return reg
+
+
+def _new_run_id() -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    return f"run-{ts}-{random.randint(1000, 9999)}"
+
+
+def _record_pids(run_dir: Path, pids: dict[str, int]) -> None:
+    atomic_write_json(run_dir / "pids.json", pids)
 
 
 def ensure_claude_mem_worker() -> bool:
@@ -219,88 +268,93 @@ def create_agent(
 
     _ensure_npm_path()
 
-    agent_root = get_agent_root(cfg)
-    used_ports = {a.port for a in iter_agents(agent_root)}
+    paths = get_workspace_paths(cfg)
+    registry = _registry(cfg)
 
-    if port is None:
-        port = pick_port(cfg, used_ports)
+    with FileLock(paths.manager_app_lock, stale_ttl_sec=30, timeout_sec=0.5):
+        agent_root = paths.agents_dir
+        used_ports = {a.port for a in iter_agents(agent_root)}
+        try:
+            used_ports |= registry.get_allocated_ports()
+        except Exception:
+            # Fallback if registry fetch fails
+            pass
 
-    if agent_id is None:
-        agent_id = f"{random.randint(1000, 9999)}-{port}"
+        if port is None:
+            port = pick_port(cfg, used_ports)
 
-    agent_dir = agent_root / agent_id
-    agent_dir.mkdir(parents=True, exist_ok=True)
+        if agent_id is None:
+            agent_id = f"{random.randint(1000, 9999)}-{port}"
 
-    pm2_name = f"agent-{agent_id}"
-    if pm2_exists(pm2_name):
-        raise RuntimeError(f"Agent already exists in pm2: {pm2_name}")
+        agent_dir = paths.agent_dir(agent_id)
+        ensure_dir(agent_dir)
 
-    project = Path(project_path).resolve()
-    if not project.exists():
-        raise FileNotFoundError(f"Project path not found: {project}")
+        pm2_name = f"agent-{agent_id}"
+        if pm2_exists(pm2_name):
+            raise RuntimeError(f"Agent already exists in pm2: {pm2_name}")
 
-    # Default proxy config if not provided
-    if proxy is None:
-        proxy = ProxyConfig()
+        project = Path(project_path).resolve()
+        if not project.exists():
+            raise FileNotFoundError(f"Project path not found: {project}")
 
-    # Default config options if not provided
-    if config is None:
-        config = AgentConfigOptions()
+        # Default proxy config if not provided
+        if proxy is None:
+            proxy = ProxyConfig()
 
-    logger.info(f"[AGENT] create_agent | id={agent_id} port={port} purpose={purpose} proxy={proxy.enabled}")
+        # Default config options if not provided
+        if config is None:
+            config = AgentConfigOptions()
 
-    # 0) Save agent config files to agent_dir (per-agent isolation)
-    if config.system_prompt:
-        write_agent_local_claude_md(agent_dir, config.system_prompt)
+        logger.info(f"[AGENT] create_agent | id={agent_id} port={port} purpose={purpose} proxy={proxy.enabled}")
 
-    # Build MCP servers config - use provided or generate defaults
-    mcp_servers = config.mcp_servers
-    if not mcp_servers:
-        # Generate default MCP stack with memory server
-        mcp_servers = build_default_mcp_servers(
-            port=port,
-            data_dir=agent_dir,
-            claude_mem_root=cfg.claude_mem_root
-        )
-    write_agent_local_mcp_json(agent_dir, {"mcpServers": mcp_servers})
+        with FileLock(paths.agent_lock_path(agent_id), stale_ttl_sec=60, timeout_sec=2):
+            try:
+                registry.allocate_port(
+                    name=f"agent:{agent_id}:port",
+                    port=port,
+                    run_id=None,
+                    allocated_at_iso=datetime.now(timezone.utc).isoformat(),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise RuntimeError(f"Port {port} already allocated") from exc
 
-    # 0.1) Sync config files from agent_dir to project
-    sync_agent_config_to_project(agent_dir, project)
+            registry.upsert_agent(AgentSpec(agent_id=agent_id, name=purpose, role="agent"))
 
-    # 1) Start worker (pm2)
-    start_worker(cfg, pm2_name=pm2_name, port=port, data_dir=agent_dir)
+            if config.system_prompt:
+                write_agent_local_claude_md(agent_dir, config.system_prompt)
 
-    # 2) Start viewer (if use_browser=True)
-    viewer_pid = None
-    if use_browser:
-        url = f"http://localhost:{port}"
-        viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent_id, headless=True)
+            mcp_servers = config.mcp_servers
+            if not mcp_servers:
+                mcp_servers = build_default_mcp_servers(
+                    port=port,
+                    data_dir=agent_dir,
+                    claude_mem_root=cfg.claude_mem_root
+                )
+            write_agent_local_mcp_json(agent_dir, {"mcpServers": mcp_servers})
 
-    # 3) Start claude cmd window
-    title = f"{purpose} | :{port}"
-    run_cmd = _write_run_cmd(agent_dir, title=title, port=port, data_dir=agent_dir, project_path=project, proxy=proxy, config=config)
-    cmd_pid = spawn_cmd_window(run_cmd, workdir=str(project))
+            sync_agent_config_to_project(agent_dir, project)
 
-    # Save agent record
-    rec = AgentRecord(
-        id=agent_id,
-        purpose=purpose,
-        project_path=str(project),
-        port=port,
-        pm2_name=pm2_name,
-        cmd_pid=cmd_pid,
-        viewer_pid=viewer_pid,
-        use_browser=use_browser,
-        proxy=proxy,
-        config=config,
-    )
-    save_agent(agent_root, rec)
+            rec = AgentRecord(
+                id=agent_id,
+                purpose=purpose,
+                project_path=str(project),
+                port=port,
+                pm2_name=pm2_name,
+                cmd_pid=None,
+                viewer_pid=None,
+                use_browser=use_browser,
+                proxy=proxy,
+                config=config,
+                active_run_id=None,
+            )
+            save_agent(agent_root, rec)
 
-    logger.info(f"[AGENT] created | id={agent_id} port={port}")
-    return rec
+        logger.info(f"[AGENT] created | id={agent_id} port={port}")
+    # Start initial run outside the manager lock to avoid holding it during process startup
+    return start_agent(agent_id, cfg=cfg, skip_cmd=False)
 
 
-def start_agent(agent_id: str, cfg: Optional[AppConfig] = None, skip_cmd: bool = False) -> AgentRecord:
+def start_agent(agent_id: str, cfg: Optional[AppConfig] = None, skip_cmd: bool = False, force_viewer: Optional[bool] = None) -> AgentRecord:
     """
     Start an existing agent (restart worker, open windows).
 
@@ -315,48 +369,95 @@ def start_agent(agent_id: str, cfg: Optional[AppConfig] = None, skip_cmd: bool =
     if cfg is None:
         cfg = load_config()
 
-    agent_root = get_agent_root(cfg)
+    paths = get_workspace_paths(cfg)
+    registry = _registry(cfg)
+    agent_root = paths.agents_dir
     agent = load_agent(agent_root, agent_id)
-    agent_dir = agent_root / agent_id
+    agent_dir = paths.agent_dir(agent_id)
 
     logger.info(f"[AGENT] start_agent | id={agent_id} skip_cmd={skip_cmd}")
 
-    # Ensure claude-mem worker is running for memory UI
     ensure_claude_mem_worker()
 
-    # Sync agent-local config files to project (CLAUDE.md, .mcp.json)
-    project_path = Path(agent.project_path)
-    synced = sync_agent_config_to_project(agent_dir, project_path)
-    if synced:
-        logger.info(f"[AGENT] start_agent | synced config files: {list(synced.keys())}")
+    with FileLock(paths.manager_app_lock, stale_ttl_sec=30, timeout_sec=0.5):
+        run_id = _new_run_id()
+        run_dir = paths.run_dir(agent_id, run_id)
+        run_state_dir = paths.run_state_dir(agent_id, run_id)
+        run_logs_dir = paths.run_logs_dir(agent_id, run_id)
+        run_artifacts_dir = paths.run_artifacts_dir(agent_id, run_id)
+        run_worktree_dir = paths.run_worktree_dir(agent_id, run_id)
+        ensure_dir(run_dir)
+        ensure_dir(run_state_dir)
+        ensure_dir(run_logs_dir)
+        ensure_dir(run_artifacts_dir)
+        ensure_dir(run_worktree_dir)
 
-    # Ensure worker is running
-    if not pm2_exists(agent.pm2_name):
-        start_worker(cfg, pm2_name=agent.pm2_name, port=agent.port, data_dir=agent_dir)
-
-    # Open viewer if needed
-    viewer_pid = agent.viewer_pid
-    if agent.use_browser and not is_pid_running(viewer_pid):
-        url = f"http://localhost:{agent.port}"
-        viewer_pid = spawn_browser(url, cfg.browser, agent_id=agent.id, headless=True)
-
-    # Open claude window if needed (unless skip_cmd for embedded terminal)
-    cmd_pid = agent.cmd_pid
-    if not skip_cmd and not is_pid_running(cmd_pid):
-        title = f"{agent.purpose} | :{agent.port}"
-        # Always regenerate run.cmd to apply latest proxy/config settings
-        run_cmd = _write_run_cmd(
-            agent_dir, title=title, port=agent.port,
-            data_dir=agent_dir, project_path=Path(agent.project_path),
-            proxy=agent.proxy, config=agent.config
+        runner_env = build_run_sandbox_env(run_dir)
+        heartbeat_path = run_state_dir / "heartbeat.json"
+        atomic_write_json(
+            heartbeat_path,
+            {"agent_id": agent_id, "run_id": run_id, "ts": datetime.now(timezone.utc).isoformat()},
         )
-        cmd_pid = spawn_cmd_window(run_cmd, workdir=agent.project_path)
 
-    # Update record
-    updated = agent.model_copy()
-    updated.cmd_pid = cmd_pid
-    updated.viewer_pid = viewer_pid
-    save_agent(agent_root, updated)
+        run_spec = RunSpec(
+            run_id=run_id,
+            agent_id=agent_id,
+            status="starting",
+            run_dir=run_dir,
+            worktree_dir=Path(agent.project_path),
+        )
+        registry.create_run(run_spec)
+
+        with FileLock(paths.agent_lock_path(agent_id), stale_ttl_sec=60, timeout_sec=2), FileLock(
+            paths.run_lock_path(agent_id, run_id), stale_ttl_sec=60, timeout_sec=2
+        ):
+            project_path = Path(agent.project_path)
+            synced = sync_agent_config_to_project(agent_dir, project_path)
+            if synced:
+                logger.info(f"[AGENT] start_agent | synced config files: {list(synced.keys())}")
+
+            if not pm2_exists(agent.pm2_name):
+                start_worker(cfg, pm2_name=agent.pm2_name, port=agent.port, data_dir=agent_dir, base_env=runner_env.env)
+
+            viewer_pid = agent.viewer_pid
+            open_viewer = agent.use_browser if force_viewer is None else force_viewer
+            if open_viewer and not is_pid_running(viewer_pid):
+                url = f"http://localhost:{agent.port}"
+                viewer_pid = spawn_browser(
+                    url,
+                    cfg.browser,
+                    agent_id=agent.id,
+                    headless=True,
+                    profiles_root=paths.agent_dir(agent_id) / "browser-profiles",
+                )
+                if viewer_pid:
+                    registry.attach_pid(run_id, "viewer", viewer_pid)
+
+            cmd_pid = agent.cmd_pid
+            if not skip_cmd and not is_pid_running(cmd_pid):
+                title = f"{agent.purpose} | :{agent.port}"
+                run_cmd = _write_run_cmd(
+                    agent_dir,
+                    title=title,
+                    port=agent.port,
+                    data_dir=agent_dir,
+                    project_path=project_path,
+                    proxy=agent.proxy,
+                    config=agent.config,
+                    runner_env=runner_env,
+                    workdir=project_path,
+                )
+                cmd_pid = spawn_cmd_window(run_cmd, workdir=str(project_path), env=runner_env.env)
+                registry.attach_pid(run_id, "cmd", cmd_pid)
+
+        updated = agent.model_copy()
+        updated.cmd_pid = cmd_pid
+        updated.viewer_pid = viewer_pid
+        updated.active_run_id = run_id
+        save_agent(agent_root, updated)
+
+        _record_pids(run_dir, {"cmd": cmd_pid or 0, "viewer": viewer_pid or 0})
+        registry.set_run_status(run_id, "running")
 
     return updated
 
@@ -373,26 +474,37 @@ def stop_agent(agent_id: str, purge: bool = False, cfg: Optional[AppConfig] = No
     if cfg is None:
         cfg = load_config()
 
-    agent_root = get_agent_root(cfg)
+    paths = get_workspace_paths(cfg)
+    registry = _registry(cfg)
+    agent_root = paths.agents_dir
     agent = load_agent(agent_root, agent_id)
 
     logger.info(f"[AGENT] stop_agent | id={agent_id} purge={purge}")
 
-    # Stop pm2 worker
-    pm2_delete(agent.pm2_name)
+    with FileLock(paths.manager_app_lock, stale_ttl_sec=30, timeout_sec=0.5):
+        with FileLock(paths.agent_lock_path(agent_id), stale_ttl_sec=60, timeout_sec=2):
+            pm2_delete(agent.pm2_name)
 
-    # Kill cmd window
-    if agent.cmd_pid and is_pid_running(agent.cmd_pid):
-        kill_tree(agent.cmd_pid)
+            if agent.cmd_pid and is_pid_running(agent.cmd_pid):
+                kill_tree(agent.cmd_pid)
 
-    # Kill viewer
-    if agent.viewer_pid and is_pid_running(agent.viewer_pid):
-        kill_tree(agent.viewer_pid)
+            if agent.viewer_pid and is_pid_running(agent.viewer_pid):
+                kill_tree(agent.viewer_pid)
 
-    # Purge if requested
-    if purge:
-        shutil.rmtree(agent_root / agent_id, ignore_errors=True)
-        logger.info(f"[AGENT] purged | id={agent_id}")
+            if agent.active_run_id:
+                registry.set_run_status(agent.active_run_id, "stopped")
+
+            updated = agent.model_copy()
+            updated.active_run_id = None
+            save_agent(agent_root, updated)
+
+            if purge:
+                shutil.rmtree(agent_root / agent_id, ignore_errors=True)
+                try:
+                    registry.release_port(f"agent:{agent_id}:port")
+                except Exception:
+                    pass
+                logger.info(f"[AGENT] purged | id={agent_id}")
 
 
 def delete_agent(agent_id: str, cfg: Optional[AppConfig] = None) -> None:
