@@ -42,9 +42,47 @@ if sys.platform == "win32":
     # Window messages
     WM_CLOSE = 0x0010
     WM_SIZE = 0x0005
+    WM_KEYDOWN = 0x0100
+    WM_KEYUP = 0x0101
+    WM_CHAR = 0x0102
 
     # EnumWindows callback type
     WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    # SendInput structures for keyboard forwarding
+    INPUT_KEYBOARD = 1
+    KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_UNICODE = 0x0004
+
+    class KEYBDINPUT(ctypes.Structure):
+        _fields_ = [
+            ("wVk", wintypes.WORD),
+            ("wScan", wintypes.WORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        ]
+
+    class INPUT(ctypes.Structure):
+        class _INPUT(ctypes.Union):
+            _fields_ = [("ki", KEYBDINPUT)]
+        _fields_ = [
+            ("type", wintypes.DWORD),
+            ("_input", _INPUT),
+        ]
+
+    # Virtual key codes
+    VK_MAP = {
+        'Return': 0x0D, 'space': 0x20, 'BackSpace': 0x08, 'Tab': 0x09,
+        'Escape': 0x1B, 'Delete': 0x2E, 'Insert': 0x2D,
+        'Home': 0x24, 'End': 0x23, 'Prior': 0x21, 'Next': 0x22,  # PageUp/PageDown
+        'Up': 0x26, 'Down': 0x28, 'Left': 0x25, 'Right': 0x27,
+        'F1': 0x70, 'F2': 0x71, 'F3': 0x72, 'F4': 0x73, 'F5': 0x74,
+        'F6': 0x75, 'F7': 0x76, 'F8': 0x77, 'F9': 0x78, 'F10': 0x79,
+        'F11': 0x7A, 'F12': 0x7B,
+        'Shift_L': 0x10, 'Shift_R': 0x10, 'Control_L': 0x11, 'Control_R': 0x11,
+        'Alt_L': 0x12, 'Alt_R': 0x12,
+    }
 
 
 class EmbeddedConsole(tk.Frame):
@@ -422,6 +460,61 @@ class EmbeddedConsole(tk.Frame):
         toplevel.bind("<FocusIn>", lambda e: self._schedule_focus())
         toplevel.bind("<Activate>", lambda e: self._schedule_focus())
 
+        # Bind keyboard events for forwarding to console
+        toplevel.bind("<Key>", self._forward_key)
+        toplevel.bind("<KeyRelease>", self._forward_key_release)
+
+    def _forward_key(self, event) -> str:
+        """Forward key press to embedded console."""
+        if not self.console_hwnd or not self.running:
+            return ""
+        try:
+            # First ensure console has focus
+            user32.SetFocus(self.console_hwnd)
+
+            # Get virtual key code
+            vk = None
+            if event.keysym in VK_MAP:
+                vk = VK_MAP[event.keysym]
+            elif len(event.char) == 1:
+                # For regular characters, use VkKeyScan
+                vk = user32.VkKeyScanW(ord(event.char)) & 0xFF
+
+            if vk:
+                # Send key down using PostMessage for better reliability
+                scan = user32.MapVirtualKeyW(vk, 0)
+                lparam = (scan << 16) | 1
+                user32.PostMessageW(self.console_hwnd, WM_KEYDOWN, vk, lparam)
+
+                # For printable chars, also send WM_CHAR
+                if event.char and len(event.char) == 1 and ord(event.char) >= 32:
+                    user32.PostMessageW(self.console_hwnd, WM_CHAR, ord(event.char), lparam)
+
+            return "break"  # Prevent Tkinter from processing
+        except Exception as e:
+            print(f"Key forward error: {e}")
+            return ""
+
+    def _forward_key_release(self, event) -> str:
+        """Forward key release to embedded console."""
+        if not self.console_hwnd or not self.running:
+            return ""
+        try:
+            vk = None
+            if event.keysym in VK_MAP:
+                vk = VK_MAP[event.keysym]
+            elif len(event.char) == 1:
+                vk = user32.VkKeyScanW(ord(event.char)) & 0xFF
+
+            if vk:
+                scan = user32.MapVirtualKeyW(vk, 0)
+                lparam = (scan << 16) | 1 | (1 << 30) | (1 << 31)  # Key up flags
+                user32.PostMessageW(self.console_hwnd, WM_KEYUP, vk, lparam)
+
+            return "break"
+        except:
+            return ""
+
     def _schedule_focus(self) -> None:
         """Schedule focus to console after small delay."""
         if self.console_hwnd and self.running:
@@ -451,6 +544,21 @@ class EmbeddedConsole(tk.Frame):
         if not self.console_hwnd:
             return
         try:
+            # Re-attach thread input to ensure keyboard works after focus changes
+            current_thread_id = kernel32.GetCurrentThreadId()
+            console_thread_id = user32.GetWindowThreadProcessId(self.console_hwnd, None)
+
+            if console_thread_id and console_thread_id != current_thread_id:
+                # Detach first if was attached before
+                if hasattr(self, '_attached_thread') and self._attached_thread:
+                    try:
+                        user32.AttachThreadInput(current_thread_id, self._attached_thread, False)
+                    except:
+                        pass
+                # Attach to console thread
+                user32.AttachThreadInput(current_thread_id, console_thread_id, True)
+                self._attached_thread = console_thread_id
+
             # SetFocus works for child windows when parent is foreground
             user32.SetFocus(self.console_hwnd)
         except:

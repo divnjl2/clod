@@ -126,6 +126,59 @@ def _ensure_npm_path() -> None:
         os.environ["PATH"] = str(npm_bin) + os.pathsep + os.environ.get("PATH", "")
 
 
+def ensure_claude_mem_worker() -> bool:
+    """
+    Ensure claude-mem worker is running for memory UI access.
+
+    Checks if claude-mem-worker PM2 process is running and starts it if not.
+    The worker provides the web UI at http://localhost:37777 (or dynamic port).
+
+    Returns:
+        True if worker is running (or was started), False if failed
+    """
+    try:
+        # Check if already running
+        if pm2_exists("claude-mem-worker"):
+            logger.debug("[CLAUDE-MEM] worker already running")
+            return True
+
+        # Find the worker script
+        claude_mem_paths = [
+            Path.home() / "Desktop" / "claude-mem" / "plugin" / "scripts" / "worker-service.cjs",
+            Path.home() / ".claude" / "plugins" / "marketplaces" / "thedotmack" / "scripts" / "worker-service.cjs",
+        ]
+
+        worker_script = None
+        for p in claude_mem_paths:
+            if p.exists():
+                worker_script = p
+                break
+
+        if not worker_script:
+            logger.warning("[CLAUDE-MEM] worker script not found, skipping")
+            return False
+
+        # Start the worker via PM2
+        import subprocess
+        result = subprocess.run(
+            ["pm2", "start", str(worker_script), "--name", "claude-mem-worker"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode == 0:
+            logger.info(f"[CLAUDE-MEM] worker started | script={worker_script}")
+            return True
+        else:
+            logger.error(f"[CLAUDE-MEM] failed to start worker | error={result.stderr}")
+            return False
+
+    except Exception as e:
+        logger.error(f"[CLAUDE-MEM] error starting worker | error={e}")
+        return False
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # AGENT LIFECYCLE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -267,6 +320,9 @@ def start_agent(agent_id: str, cfg: Optional[AppConfig] = None, skip_cmd: bool =
     agent_dir = agent_root / agent_id
 
     logger.info(f"[AGENT] start_agent | id={agent_id} skip_cmd={skip_cmd}")
+
+    # Ensure claude-mem worker is running for memory UI
+    ensure_claude_mem_worker()
 
     # Sync agent-local config files to project (CLAUDE.md, .mcp.json)
     project_path = Path(agent.project_path)
