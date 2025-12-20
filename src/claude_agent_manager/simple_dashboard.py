@@ -2369,13 +2369,21 @@ class AgentDashboard:
     def _render_welcome_form(self):
         """Render inline welcome form for first agent creation.
 
-        Uses Setup Layout A (2 columns):
+        Fixed layout (no responsive):
         - Left: Quick Start presets
         - Right: Custom Create form
-        - Responsive: <720px switches to 1 column
+        - Always shows 2 columns side-by-side
         """
         from tkinter import filedialog
         t = self.theme
+
+        # Ensure window is large enough for two cards
+        self.root.minsize(900, 600)
+        # Expand window if it's currently too small
+        current_w = self.root.winfo_width()
+        current_h = self.root.winfo_height()
+        if current_w < 1000 or current_h < 650:
+            self.root.geometry("1000x650")
 
         # Scroll container
         canvas = tk.Canvas(self.agents_frame, bg=t["card_bg"], highlightthickness=0)
@@ -2504,17 +2512,17 @@ class AgentDashboard:
         # ─────────────────────────────────────────────────────────────────────
         # LEFT COLUMN: Quick Start presets
         # ─────────────────────────────────────────────────────────────────────
-        qs_card = tk.Frame(left_col, bg=t["card_bg"])
-        qs_card.pack(fill=tk.BOTH, expand=True)
+        qs_content = tk.Frame(left_col, bg=t["card_bg"])
+        qs_content.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(
-            qs_card, text="⚡ QUICK START",
+            qs_content, text="⚡ QUICK START",
             font=("Segoe UI", 20, "bold"),  # 2x larger (was 10)
             bg=t["card_bg"], fg=t["accent"]
         ).pack(anchor="w", pady=(0, 12))
 
         # Preset buttons grid
-        presets_grid = tk.Frame(qs_card, bg=t["card_bg"])
+        presets_grid = tk.Frame(qs_content, bg=t["card_bg"])
         presets_grid.pack(fill=tk.BOTH, expand=True)
 
         # Cache to prevent infinite rebuild loop
@@ -2723,57 +2731,14 @@ class AgentDashboard:
         path_entry.bind("<Return>", lambda e: on_create() if create_btn["state"] != "disabled" else None)
 
         # ─────────────────────────────────────────────────────────────────────
-        # RESPONSIVE LAYOUT: 2 columns <-> 1 column
+        # FIXED LAYOUT: Always show 2 columns side-by-side
         # ─────────────────────────────────────────────────────────────────────
-        RESPONSIVE_BREAKPOINT = 350  # Lowered to 350px (canvas width is 378px)
-        self._welcome_last_layout = None
-
-        def update_layout():
-            """Switch between 2-column and 1-column layout based on width."""
-            width = canvas.winfo_width() if canvas.winfo_width() > 1 else 800
-
-            # DEBUG
-            print(f"[LAYOUT DEBUG] canvas width={width}, breakpoint={RESPONSIVE_BREAKPOINT}")
-
-            if width >= RESPONSIVE_BREAKPOINT:
-                layout = "two_col"
-            else:
-                layout = "one_col"
-
-            # DEBUG
-            print(f"[LAYOUT DEBUG] chosen layout={layout}, last={self._welcome_last_layout}")
-
-            # Only update if layout changed
-            if layout == self._welcome_last_layout:
-                return
-
-            self._welcome_last_layout = layout
-            print(f"[LAYOUT DEBUG] switching to {layout}")
-
-            if layout == "two_col":
-                # 2 cards side by side (equal width with uniform)
-                qs_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-                custom_card_outer.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
-                setup_container.columnconfigure(0, weight=1, uniform="setup")
-                setup_container.columnconfigure(1, weight=1, uniform="setup")
-                setup_container.rowconfigure(0, weight=1)
-            else:
-                # 1 column (stacked)
-                qs_card.grid(row=0, column=0, sticky="nsew", padx=0)
-                custom_card_outer.grid(row=1, column=0, sticky="nsew", padx=0, pady=(16, 0))
-                setup_container.columnconfigure(0, weight=1)
-                setup_container.columnconfigure(1, weight=0)
-                setup_container.rowconfigure(0, weight=0)
-                setup_container.rowconfigure(1, weight=0)
-
-        # Initial layout
-        update_layout()
-
-        # Update on canvas resize
-        def on_canvas_resize_layout(e):
-            update_layout()
-
-        canvas.bind("<Configure>", on_canvas_resize_layout, add="+")
+        # Two cards side by side (equal width with uniform)
+        qs_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        custom_card_outer.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+        setup_container.columnconfigure(0, weight=1, uniform="setup")
+        setup_container.columnconfigure(1, weight=1, uniform="setup")
+        setup_container.rowconfigure(0, weight=1)
 
         # Data path hint at bottom
         tk.Label(
