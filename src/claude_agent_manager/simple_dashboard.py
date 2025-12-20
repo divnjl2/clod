@@ -2377,15 +2377,15 @@ class AgentDashboard:
         from tkinter import filedialog
         t = self.theme
 
-        # Setup mode - compact vertical layout
+        # Setup mode - wide window for two-column horizontal layout
         if not hasattr(self, '_ui_mode') or self._ui_mode != 'setup':
             self._ui_mode = 'setup'
-            self.root.minsize(450, 550)
-            # Expand window if needed
+            self.root.minsize(720, 450)
+            # Expand window for horizontal layout
             current_w = self.root.winfo_width()
             current_h = self.root.winfo_height()
-            if current_w < 500 or current_h < 600:
-                self.root.geometry("500x600")
+            if current_w < 750 or current_h < 480:
+                self.root.geometry("750x480")
 
         # Scroll container
         canvas = tk.Canvas(self.agents_frame, bg=t["card_bg"], highlightthickness=0)
@@ -2448,22 +2448,28 @@ class AgentDashboard:
         ).pack(pady=(0, 12))
 
         # ═══════════════════════════════════════════════════════════════════════
-        # VERTICAL LAYOUT: Header → Quick Start → Create Custom (full width)
+        # HORIZONTAL LAYOUT: Quick Start | Create Custom (side by side)
         # ═══════════════════════════════════════════════════════════════════════
 
-        # Quick Start section (full width)
-        qs_card = tk.Frame(form_frame, bg=t["card_bg"],
-                          highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
-        qs_card.pack(fill=tk.X, padx=16, pady=(0, 8))
-        left_col = tk.Frame(qs_card, bg=t["card_bg"])
-        left_col.pack(fill=tk.X, padx=12, pady=10)
+        # Container for two columns
+        columns_container = tk.Frame(form_frame, bg=t["card_bg"])
+        columns_container.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
+        columns_container.columnconfigure(0, weight=1)
+        columns_container.columnconfigure(1, weight=1)
 
-        # Create Custom section (full width)
-        custom_card_outer = tk.Frame(form_frame, bg=t["card_bg"],
+        # Quick Start section (left column)
+        qs_card = tk.Frame(columns_container, bg=t["card_bg"],
+                          highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
+        qs_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
+        left_col = tk.Frame(qs_card, bg=t["card_bg"])
+        left_col.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+
+        # Create Custom section (right column)
+        custom_card_outer = tk.Frame(columns_container, bg=t["card_bg"],
                                     highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
-        custom_card_outer.pack(fill=tk.X, padx=16, pady=(0, 8))
+        custom_card_outer.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
         right_col = tk.Frame(custom_card_outer, bg=t["card_bg"])
-        right_col.pack(fill=tk.X, padx=12, pady=10)
+        right_col.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
 
         # Define presets with icons
         quick_presets = [
@@ -2530,9 +2536,8 @@ class AgentDashboard:
         self._welcome_preset_buttons = []
 
         def rebuild_preset_grid():
-            """Rebuild preset grid - 3 columns layout."""
-            cols = 3
-            wrap = 120
+            """Rebuild preset grid - compact 3x2 layout for narrower column."""
+            cols = 3  # 3 columns fits better in half-width
 
             # Only rebuild if columns changed (prevent infinite loop)
             if cols == self._welcome_last_cols:
@@ -2551,10 +2556,10 @@ class AgentDashboard:
                 for child in card.winfo_children():
                     child.configure(bg=bg)
 
-            # Create buttons
+            # Create buttons - 3 per row
             for i, (icon, preset_id, label, desc) in enumerate(quick_presets):
                 btn_frame = tk.Frame(presets_grid, bg=t["btn_bg"], cursor="hand2")
-                btn_frame.grid(row=i // cols, column=i % cols, padx=4, pady=4, sticky="nsew")
+                btn_frame.grid(row=i // cols, column=i % cols, padx=3, pady=3, sticky="nsew")
                 self._welcome_preset_buttons.append(btn_frame)
 
                 # Compact card: icon + label centered
