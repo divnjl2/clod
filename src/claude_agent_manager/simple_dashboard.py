@@ -2719,23 +2719,30 @@ class AgentDashboard:
         # ─────────────────────────────────────────────────────────────────────
         # RESPONSIVE LAYOUT: 2 columns <-> 1 column
         # ─────────────────────────────────────────────────────────────────────
-        RESPONSIVE_BREAKPOINT = 720
+        RESPONSIVE_BREAKPOINT = 500  # Lowered from 720 to work on smaller windows
         self._welcome_last_layout = None
 
         def update_layout():
             """Switch between 2-column and 1-column layout based on width."""
             width = canvas.winfo_width() if canvas.winfo_width() > 1 else 800
 
+            # DEBUG
+            print(f"[LAYOUT DEBUG] canvas width={width}, breakpoint={RESPONSIVE_BREAKPOINT}")
+
             if width >= RESPONSIVE_BREAKPOINT:
                 layout = "two_col"
             else:
                 layout = "one_col"
+
+            # DEBUG
+            print(f"[LAYOUT DEBUG] chosen layout={layout}, last={self._welcome_last_layout}")
 
             # Only update if layout changed
             if layout == self._welcome_last_layout:
                 return
 
             self._welcome_last_layout = layout
+            print(f"[LAYOUT DEBUG] switching to {layout}")
 
             if layout == "two_col":
                 # 2 columns side by side
