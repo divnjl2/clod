@@ -31,6 +31,7 @@ else:
 # Data files to include
 datas = [
     (str(ASSETS_DIR / 'icon.png'), 'assets'),
+    (str(ASSETS_DIR / 'icon_white.png'), 'assets'),
     (str(SRC_DIR / 'claude_agent_manager' / 'viewer.html'), 'claude_agent_manager'),
     (str(SRC_DIR / 'claude_agent_manager' / 'subagent_mcp.py'), 'claude_agent_manager'),
 ]
