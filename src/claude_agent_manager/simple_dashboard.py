@@ -2438,16 +2438,24 @@ class AgentDashboard:
         ).pack(pady=(0, 16))
 
         # ═══════════════════════════════════════════════════════════════════════
-        # SETUP LAYOUT A: Two-column layout (responsive)
+        # SETUP LAYOUT A: Two-column layout (responsive) - TWO SEPARATE CARDS
         # ═══════════════════════════════════════════════════════════════════════
 
-        # Setup container (grid for 2 columns)
-        setup_container = tk.Frame(form_frame, bg=t["card_bg"])
-        setup_container.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
+        # Setup container - app background (NOT card_bg)
+        setup_container = tk.Frame(form_frame, bg=t["bg"])
+        setup_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 16))
 
-        # Left and right columns
-        left_col = tk.Frame(setup_container, bg=t["card_bg"])
-        right_col = tk.Frame(setup_container, bg=t["card_bg"])
+        # LEFT CARD: Quick Start (with border and padding)
+        qs_card = tk.Frame(setup_container, bg=t["card_bg"],
+                          highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
+        left_col = tk.Frame(qs_card, bg=t["card_bg"])
+        left_col.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
+
+        # RIGHT CARD: Custom Create (with border and padding)
+        custom_card_outer = tk.Frame(setup_container, bg=t["card_bg"],
+                                    highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
+        right_col = tk.Frame(custom_card_outer, bg=t["card_bg"])
+        right_col.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
 
         # Define presets with icons
         quick_presets = [
@@ -2597,25 +2605,22 @@ class AgentDashboard:
         # ─────────────────────────────────────────────────────────────────────
         # RIGHT COLUMN: Custom Create form
         # ─────────────────────────────────────────────────────────────────────
-        custom_card = tk.Frame(right_col, bg=t["card_bg"])
-        custom_card.pack(fill=tk.BOTH, expand=True)
-
         tk.Label(
-            custom_card, text="🔧 CREATE CUSTOM",
+            right_col, text="🔧 CREATE CUSTOM",
             font=("Segoe UI", 20, "bold"),  # 2x larger (was 10)
             bg=t["card_bg"], fg=t["accent"]
         ).pack(anchor="w", pady=(0, 16))
 
         # Purpose
         tk.Label(
-            custom_card, text="Purpose",
+            right_col, text="Purpose",
             font=("Segoe UI", 9),
             bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
         ).pack(fill=tk.X, pady=(0, 4))
 
         self._welcome_purpose = tk.StringVar()
         purpose_entry = tk.Entry(
-            custom_card, textvariable=self._welcome_purpose,
+            right_col, textvariable=self._welcome_purpose,
             font=("Segoe UI", 10),
             bg=t["btn_bg"], fg=t["fg"],
             insertbackground=t["fg"],
@@ -2625,12 +2630,12 @@ class AgentDashboard:
 
         # Project path
         tk.Label(
-            custom_card, text="Project Directory",
+            right_col, text="Project Directory",
             font=("Segoe UI", 9),
             bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
         ).pack(fill=tk.X, pady=(12, 4))
 
-        path_frame = tk.Frame(custom_card, bg=t["card_bg"])
+        path_frame = tk.Frame(right_col, bg=t["card_bg"])
         path_frame.pack(fill=tk.X)
 
         self._welcome_path = tk.StringVar()
@@ -2661,14 +2666,14 @@ class AgentDashboard:
 
         # Hint/Error label
         hint_label = tk.Label(
-            custom_card, text="Fill both fields to enable Create",
+            right_col, text="Fill both fields to enable Create",
             font=("Segoe UI", 8),
             bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
         )
         hint_label.pack(fill=tk.X, pady=(8, 0))
 
         # Create button
-        btn_container = tk.Frame(custom_card, bg=t["card_bg"])
+        btn_container = tk.Frame(right_col, bg=t["card_bg"])
         btn_container.pack(fill=tk.X, pady=(16, 0))
 
         def on_create():
@@ -2746,16 +2751,16 @@ class AgentDashboard:
             print(f"[LAYOUT DEBUG] switching to {layout}")
 
             if layout == "two_col":
-                # 2 columns side by side
-                left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-                right_col.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-                setup_container.columnconfigure(0, weight=1)
-                setup_container.columnconfigure(1, weight=1)
+                # 2 cards side by side (equal width with uniform)
+                qs_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+                custom_card_outer.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+                setup_container.columnconfigure(0, weight=1, uniform="setup")
+                setup_container.columnconfigure(1, weight=1, uniform="setup")
                 setup_container.rowconfigure(0, weight=1)
             else:
                 # 1 column (stacked)
-                left_col.grid(row=0, column=0, sticky="nsew", padx=0)
-                right_col.grid(row=1, column=0, sticky="nsew", padx=0, pady=(12, 0))
+                qs_card.grid(row=0, column=0, sticky="nsew", padx=0)
+                custom_card_outer.grid(row=1, column=0, sticky="nsew", padx=0, pady=(16, 0))
                 setup_container.columnconfigure(0, weight=1)
                 setup_container.columnconfigure(1, weight=0)
                 setup_container.rowconfigure(0, weight=0)
