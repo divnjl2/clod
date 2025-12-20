@@ -2377,15 +2377,15 @@ class AgentDashboard:
         from tkinter import filedialog
         t = self.theme
 
-        # Setup mode - adequate window for two cards (only when switching from dashboard)
+        # Setup mode - compact vertical layout
         if not hasattr(self, '_ui_mode') or self._ui_mode != 'setup':
             self._ui_mode = 'setup'
-            self.root.minsize(880, 500)
-            # Expand window if it's currently too small
+            self.root.minsize(450, 550)
+            # Expand window if needed
             current_w = self.root.winfo_width()
             current_h = self.root.winfo_height()
-            if current_w < 900 or current_h < 550:
-                self.root.geometry("900x550")
+            if current_w < 500 or current_h < 600:
+                self.root.geometry("500x600")
 
         # Scroll container
         canvas = tk.Canvas(self.agents_frame, bg=t["card_bg"], highlightthickness=0)
@@ -2448,24 +2448,22 @@ class AgentDashboard:
         ).pack(pady=(0, 12))
 
         # ═══════════════════════════════════════════════════════════════════════
-        # SETUP LAYOUT A: Two-column layout (responsive) - TWO SEPARATE CARDS
+        # VERTICAL LAYOUT: Header → Quick Start → Create Custom (full width)
         # ═══════════════════════════════════════════════════════════════════════
 
-        # Setup container - app background (NOT card_bg)
-        setup_container = tk.Frame(form_frame, bg=t["bg"])
-        setup_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
-
-        # LEFT CARD: Quick Start (with border and padding)
-        qs_card = tk.Frame(setup_container, bg=t["card_bg"],
+        # Quick Start section (full width)
+        qs_card = tk.Frame(form_frame, bg=t["card_bg"],
                           highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
+        qs_card.pack(fill=tk.X, padx=16, pady=(0, 8))
         left_col = tk.Frame(qs_card, bg=t["card_bg"])
-        left_col.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+        left_col.pack(fill=tk.X, padx=12, pady=10)
 
-        # RIGHT CARD: Custom Create (with border and padding)
-        custom_card_outer = tk.Frame(setup_container, bg=t["card_bg"],
+        # Create Custom section (full width)
+        custom_card_outer = tk.Frame(form_frame, bg=t["card_bg"],
                                     highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
+        custom_card_outer.pack(fill=tk.X, padx=16, pady=(0, 8))
         right_col = tk.Frame(custom_card_outer, bg=t["card_bg"])
-        right_col.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+        right_col.pack(fill=tk.X, padx=12, pady=10)
 
         # Define presets with icons
         quick_presets = [
@@ -2714,16 +2712,6 @@ class AgentDashboard:
         # Bind Enter key
         purpose_entry.bind("<Return>", lambda e: browse())
         path_entry.bind("<Return>", lambda e: on_create() if create_btn["state"] != "disabled" else None)
-
-        # ─────────────────────────────────────────────────────────────────────
-        # FIXED LAYOUT: Always show 2 columns side-by-side
-        # ─────────────────────────────────────────────────────────────────────
-        # Two cards side by side (equal width with uniform)
-        qs_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        custom_card_outer.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
-        setup_container.columnconfigure(0, weight=1, uniform="setup")
-        setup_container.columnconfigure(1, weight=1, uniform="setup")
-        setup_container.rowconfigure(0, weight=1)
 
         # Data path hint at bottom
         tk.Label(
