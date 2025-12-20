@@ -2719,7 +2719,7 @@ class AgentDashboard:
         # ─────────────────────────────────────────────────────────────────────
         # RESPONSIVE LAYOUT: 2 columns <-> 1 column
         # ─────────────────────────────────────────────────────────────────────
-        RESPONSIVE_BREAKPOINT = 500  # Lowered from 720 to work on smaller windows
+        RESPONSIVE_BREAKPOINT = 350  # Lowered to 350px (canvas width is 378px)
         self._welcome_last_layout = None
 
         def update_layout():
