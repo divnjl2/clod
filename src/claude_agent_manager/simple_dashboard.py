@@ -2377,15 +2377,15 @@ class AgentDashboard:
         from tkinter import filedialog
         t = self.theme
 
-        # Setup mode - wide window for two-column horizontal layout
+        # Setup mode - wide window for 3-column horizontal layout
         if not hasattr(self, '_ui_mode') or self._ui_mode != 'setup':
             self._ui_mode = 'setup'
-            self.root.minsize(720, 450)
+            self.root.minsize(900, 380)
             # Expand window for horizontal layout
             current_w = self.root.winfo_width()
             current_h = self.root.winfo_height()
-            if current_w < 750 or current_h < 480:
-                self.root.geometry("750x480")
+            if current_w < 950 or current_h < 400:
+                self.root.geometry("950x400")
 
         # Scroll container
         canvas = tk.Canvas(self.agents_frame, bg=t["card_bg"], highlightthickness=0)
@@ -2408,66 +2408,77 @@ class AgentDashboard:
         canvas.bind("<Configure>", on_configure)
 
         # Pack - reduced pady for compact layout
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0), pady=12)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 20), pady=12)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=12, pady=12)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 12), pady=12)
 
         # Mouse wheel scroll
         def on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         canvas.bind_all("<MouseWheel>", on_mousewheel)
 
-        # Top section with logo
-        top = tk.Frame(form_frame, bg=t["card_bg"])
-        top.pack(fill=tk.X)
+        # ═══════════════════════════════════════════════════════════════════════
+        # SINGLE ROW LAYOUT: Header | Quick Start | Create Custom
+        # ═══════════════════════════════════════════════════════════════════════
 
-        # Welcome icon - moderate size with white background
+        # Main container - single row with 3 columns
+        row_container = tk.Frame(form_frame, bg=t["card_bg"])
+        row_container.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        row_container.columnconfigure(0, weight=1)  # Header
+        row_container.columnconfigure(1, weight=2)  # Quick Start (wider)
+        row_container.columnconfigure(2, weight=2)  # Create Custom (wider)
+        row_container.rowconfigure(0, weight=1)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # COLUMN 1: Header with logo
+        # ─────────────────────────────────────────────────────────────────────
+        header_card = tk.Frame(row_container, bg=t["card_bg"],
+                              highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
+        header_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
+        header_content = tk.Frame(header_card, bg=t["card_bg"])
+        header_content.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+
+        # Welcome icon
         icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
         if icon_path.exists():
             try:
                 self._welcome_icon = tk.PhotoImage(file=str(icon_path))
-                factor = max(1, self._welcome_icon.width() // 64)  # ~64px icon
+                factor = max(1, self._welcome_icon.width() // 56)  # ~56px icon
                 self._welcome_icon = self._welcome_icon.subsample(factor, factor)
                 tk.Label(
-                    top, image=self._welcome_icon,
-                    bg="white", borderwidth=0,
-                    padx=4, pady=4
+                    header_content, image=self._welcome_icon,
+                    bg="white", borderwidth=0, padx=4, pady=4
                 ).pack(pady=(0, 8))
             except:
                 pass
 
         tk.Label(
-            top, text="Create your first agent",
-            font=("Segoe UI Semibold", 16),
+            header_content, text="Create Agent",
+            font=("Segoe UI Semibold", 14),
             bg=t["card_bg"], fg=t["fg"]
         ).pack(pady=(0, 4))
 
         tk.Label(
-            top, text="Choose a preset or create custom agent",
-            font=("Segoe UI", 11),
-            bg=t["card_bg"], fg=t["fg_dim"]
-        ).pack(pady=(0, 12))
+            header_content, text="Choose preset\nor create custom",
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"],
+            justify="center"
+        ).pack()
 
-        # ═══════════════════════════════════════════════════════════════════════
-        # HORIZONTAL LAYOUT: Quick Start | Create Custom (side by side)
-        # ═══════════════════════════════════════════════════════════════════════
-
-        # Container for two columns
-        columns_container = tk.Frame(form_frame, bg=t["card_bg"])
-        columns_container.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
-        columns_container.columnconfigure(0, weight=1)
-        columns_container.columnconfigure(1, weight=1)
-
-        # Quick Start section (left column)
-        qs_card = tk.Frame(columns_container, bg=t["card_bg"],
+        # ─────────────────────────────────────────────────────────────────────
+        # COLUMN 2: Quick Start section
+        # ─────────────────────────────────────────────────────────────────────
+        qs_card = tk.Frame(row_container, bg=t["card_bg"],
                           highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
-        qs_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
+        qs_card.grid(row=0, column=1, sticky="nsew", padx=6, pady=0)
         left_col = tk.Frame(qs_card, bg=t["card_bg"])
         left_col.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
 
-        # Create Custom section (right column)
-        custom_card_outer = tk.Frame(columns_container, bg=t["card_bg"],
+        # ─────────────────────────────────────────────────────────────────────
+        # COLUMN 3: Create Custom section
+        # ─────────────────────────────────────────────────────────────────────
+        custom_card_outer = tk.Frame(row_container, bg=t["card_bg"],
                                     highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
-        custom_card_outer.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=0)
+        custom_card_outer.grid(row=0, column=2, sticky="nsew", padx=(6, 0), pady=0)
         right_col = tk.Frame(custom_card_outer, bg=t["card_bg"])
         right_col.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
 
@@ -2536,8 +2547,8 @@ class AgentDashboard:
         self._welcome_preset_buttons = []
 
         def rebuild_preset_grid():
-            """Rebuild preset grid - compact 3x2 layout for narrower column."""
-            cols = 3  # 3 columns fits better in half-width
+            """Rebuild preset grid - 2 columns for narrow Quick Start section."""
+            cols = 2  # 2 columns for 1/3 width column
 
             # Only rebuild if columns changed (prevent infinite loop)
             if cols == self._welcome_last_cols:
