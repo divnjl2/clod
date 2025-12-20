@@ -2377,15 +2377,15 @@ class AgentDashboard:
         from tkinter import filedialog
         t = self.theme
 
-        # Setup mode - large window for two cards (only when switching from dashboard)
+        # Setup mode - adequate window for two cards (only when switching from dashboard)
         if not hasattr(self, '_ui_mode') or self._ui_mode != 'setup':
             self._ui_mode = 'setup'
-            self.root.minsize(900, 600)
+            self.root.minsize(880, 500)
             # Expand window if it's currently too small
             current_w = self.root.winfo_width()
             current_h = self.root.winfo_height()
-            if current_w < 1000 or current_h < 650:
-                self.root.geometry("1000x650")
+            if current_w < 900 or current_h < 550:
+                self.root.geometry("900x550")
 
         # Scroll container
         canvas = tk.Canvas(self.agents_frame, bg=t["card_bg"], highlightthickness=0)
@@ -2420,32 +2420,32 @@ class AgentDashboard:
         top = tk.Frame(form_frame, bg=t["card_bg"])
         top.pack(fill=tk.X)
 
-        # Welcome icon - 3x larger with white background
+        # Welcome icon - moderate size with white background
         icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
         if icon_path.exists():
             try:
                 self._welcome_icon = tk.PhotoImage(file=str(icon_path))
-                factor = max(1, self._welcome_icon.width() // 144)  # 3x larger (was 48)
+                factor = max(1, self._welcome_icon.width() // 64)  # ~64px icon
                 self._welcome_icon = self._welcome_icon.subsample(factor, factor)
                 tk.Label(
                     top, image=self._welcome_icon,
-                    bg="white", borderwidth=0,  # White background
-                    padx=8, pady=8
-                ).pack(pady=(0, 12))
+                    bg="white", borderwidth=0,
+                    padx=4, pady=4
+                ).pack(pady=(0, 8))
             except:
                 pass
 
         tk.Label(
             top, text="Create your first agent",
-            font=("Segoe UI Semibold", 24),  # 2x larger (was 12)
+            font=("Segoe UI Semibold", 16),
             bg=t["card_bg"], fg=t["fg"]
-        ).pack(pady=(0, 8))
+        ).pack(pady=(0, 4))
 
         tk.Label(
             top, text="Choose a preset or create custom agent",
-            font=("Segoe UI", 18),  # 2x larger (was 9)
+            font=("Segoe UI", 11),
             bg=t["card_bg"], fg=t["fg_dim"]
-        ).pack(pady=(0, 16))
+        ).pack(pady=(0, 12))
 
         # ═══════════════════════════════════════════════════════════════════════
         # SETUP LAYOUT A: Two-column layout (responsive) - TWO SEPARATE CARDS
@@ -2453,19 +2453,19 @@ class AgentDashboard:
 
         # Setup container - app background (NOT card_bg)
         setup_container = tk.Frame(form_frame, bg=t["bg"])
-        setup_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 16))
+        setup_container.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
 
         # LEFT CARD: Quick Start (with border and padding)
         qs_card = tk.Frame(setup_container, bg=t["card_bg"],
                           highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
         left_col = tk.Frame(qs_card, bg=t["card_bg"])
-        left_col.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
+        left_col.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
 
         # RIGHT CARD: Custom Create (with border and padding)
         custom_card_outer = tk.Frame(setup_container, bg=t["card_bg"],
                                     highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
         right_col = tk.Frame(custom_card_outer, bg=t["card_bg"])
-        right_col.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
+        right_col.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
 
         # Define presets with icons
         quick_presets = [
@@ -2519,9 +2519,9 @@ class AgentDashboard:
 
         tk.Label(
             qs_content, text="⚡ QUICK START",
-            font=("Segoe UI", 20, "bold"),  # 2x larger (was 10)
+            font=("Segoe UI", 12, "bold"),
             bg=t["card_bg"], fg=t["accent"]
-        ).pack(anchor="w", pady=(0, 12))
+        ).pack(anchor="w", pady=(0, 8))
 
         # Preset buttons grid
         presets_grid = tk.Frame(qs_content, bg=t["card_bg"])
@@ -2532,21 +2532,10 @@ class AgentDashboard:
         self._welcome_preset_buttons = []
 
         def rebuild_preset_grid():
-            """Rebuild preset grid with responsive columns.
-
-            In Layout A: Quick Start adapts to left column width.
-            - <360px: 1 col
-            - <520px: 2 cols
-            - >=520px: 2 cols (stable)
-            """
-            # Get left_col width
-            width = left_col.winfo_width() if left_col.winfo_width() > 1 else 300
-            if width < 360:
-                cols = 1
-                wrap = 240
-            else:
-                cols = 2
-                wrap = 140
+            """Rebuild preset grid - single column for full text visibility."""
+            # Single column - ensures all text is visible
+            cols = 1
+            wrap = 300
 
             # Only rebuild if columns changed (prevent infinite loop)
             if cols == self._welcome_last_cols:
@@ -2574,20 +2563,20 @@ class AgentDashboard:
                 # Icon + label
                 tk.Label(
                     btn_frame, text=f"{icon} {label}",
-                    font=("Segoe UI", 18, "bold"),  # 2x larger (was 9)
+                    font=("Segoe UI", 10, "bold"),
                     bg=t["btn_bg"], fg=t["fg"],
-                    padx=16, pady=12  # 2x larger padding
+                    padx=8, pady=6
                 ).pack(anchor="w")
 
                 # Description - with wraplength to prevent stretching grid
                 tk.Label(
                     btn_frame, text=desc,
-                    font=("Segoe UI", 14),  # 2x larger (was 7)
+                    font=("Segoe UI", 8),
                     bg=t["btn_bg"], fg=t["fg_dim"],
-                    padx=16,  # 2x larger
-                    wraplength=wrap * 2,  # 2x wider
+                    padx=8,
+                    wraplength=180,
                     justify="left"
-                ).pack(anchor="w", pady=(0, 12))
+                ).pack(anchor="w", pady=(0, 6))
 
                 # Bind click and hover to card
                 def bind_to_card(widget, card, pid):
@@ -2617,9 +2606,9 @@ class AgentDashboard:
         # ─────────────────────────────────────────────────────────────────────
         tk.Label(
             right_col, text="🔧 CREATE CUSTOM",
-            font=("Segoe UI", 20, "bold"),  # 2x larger (was 10)
+            font=("Segoe UI", 12, "bold"),
             bg=t["card_bg"], fg=t["accent"]
-        ).pack(anchor="w", pady=(0, 16))
+        ).pack(anchor="w", pady=(0, 8))
 
         # Purpose
         tk.Label(
