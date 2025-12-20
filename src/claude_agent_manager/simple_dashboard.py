@@ -2377,44 +2377,25 @@ class AgentDashboard:
         from tkinter import filedialog
         t = self.theme
 
-        # Setup mode - wide window for 3-column horizontal layout
+        # Setup mode - hide card elements, use full window width
         if not hasattr(self, '_ui_mode') or self._ui_mode != 'setup':
             self._ui_mode = 'setup'
-            self.root.minsize(900, 380)
-            # Expand window for horizontal layout
-            current_w = self.root.winfo_width()
-            current_h = self.root.winfo_height()
-            if current_w < 950 or current_h < 400:
-                self.root.geometry("950x400")
+            self.root.minsize(900, 350)
+            self.root.geometry("950x380")
 
-        # Scroll container
-        canvas = tk.Canvas(self.agents_frame, bg=t["card_bg"], highlightthickness=0)
-        scrollbar = tk.Scrollbar(self.agents_frame, orient="vertical", command=canvas.yview)
+            # Hide card chrome (header, separator, footer) for clean setup screen
+            self.header.pack_forget()
+            self.sep.pack_forget()
+            self.footer.pack_forget()
 
-        # Main container with scroll
-        form_frame = tk.Frame(canvas, bg=t["card_bg"])
+            # Make card fill entire window
+            self.card.pack_forget()
+            self.card.configure(width=0)  # Remove fixed width
+            self.card.pack(fill=tk.BOTH, expand=True)
 
-        # Configure canvas
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas_window = canvas.create_window((0, 0), window=form_frame, anchor="nw")
-
-        def on_configure(e):
-            # CRITICAL: Stretch form_frame to canvas width
-            # Without this, form_frame stays narrow and responsive breakpoint never triggers
-            canvas.itemconfigure(canvas_window, width=e.width)
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        form_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", on_configure)
-
-        # Pack - reduced pady for compact layout
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=12, pady=12)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 12), pady=12)
-
-        # Mouse wheel scroll
-        def on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        # Simple container - no scroll needed for horizontal layout
+        form_frame = tk.Frame(self.agents_frame, bg=t["card_bg"])
+        form_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         # ═══════════════════════════════════════════════════════════════════════
         # SINGLE ROW LAYOUT: Header | Quick Start | Create Custom
@@ -2429,36 +2410,43 @@ class AgentDashboard:
         row_container.rowconfigure(0, weight=1)
 
         # ─────────────────────────────────────────────────────────────────────
-        # COLUMN 1: Header with logo
+        # COLUMN 1: Header with logo (styled to match other blocks)
         # ─────────────────────────────────────────────────────────────────────
         header_card = tk.Frame(row_container, bg=t["card_bg"],
                               highlightthickness=1, highlightbackground=t.get("border", t["separator"]))
         header_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=0)
-        header_content = tk.Frame(header_card, bg=t["card_bg"])
-        header_content.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
 
-        # Welcome icon
-        icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
+        # Wrapper to center content vertically
+        header_wrapper = tk.Frame(header_card, bg=t["card_bg"])
+        header_wrapper.pack(fill=tk.BOTH, expand=True, padx=20, pady=8)
+
+        # Content frame - centered vertically with expand
+        header_content = tk.Frame(header_wrapper, bg=t["card_bg"])
+        header_content.pack(expand=True)  # This centers vertically
+
+        # Welcome icon - use white version for dark theme
+        icon_file = "icon_white.png" if self.is_dark else "icon.png"
+        icon_path = Path(__file__).parent.parent.parent / "assets" / icon_file
         if icon_path.exists():
             try:
                 self._welcome_icon = tk.PhotoImage(file=str(icon_path))
-                factor = max(1, self._welcome_icon.width() // 56)  # ~56px icon
+                factor = max(1, self._welcome_icon.width() // 72)  # ~72px icon (bigger)
                 self._welcome_icon = self._welcome_icon.subsample(factor, factor)
                 tk.Label(
                     header_content, image=self._welcome_icon,
-                    bg="white", borderwidth=0, padx=4, pady=4
-                ).pack(pady=(0, 8))
+                    bg=t["card_bg"], borderwidth=0  # Match card background
+                ).pack(pady=(0, 12))
             except:
                 pass
 
         tk.Label(
             header_content, text="Create Agent",
-            font=("Segoe UI Semibold", 14),
+            font=("Segoe UI Semibold", 13),
             bg=t["card_bg"], fg=t["fg"]
-        ).pack(pady=(0, 4))
+        ).pack(pady=(0, 6))
 
         tk.Label(
-            header_content, text="Choose preset\nor create custom",
+            header_content, text="Choose preset or\ncreate custom agent",
             font=("Segoe UI", 9),
             bg=t["card_bg"], fg=t["fg_dim"],
             justify="center"
@@ -2662,11 +2650,11 @@ class AgentDashboard:
 
         browse_btn = tk.Label(
             path_frame, text="...",
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 9),
             bg=t["btn_bg"], fg=t["fg"],
-            cursor="hand2", padx=12
+            cursor="hand2", padx=8
         )
-        browse_btn.pack(side=tk.RIGHT, ipady=7)
+        browse_btn.pack(side=tk.RIGHT, ipady=6, padx=(2, 0))
         browse_btn.bind("<Button-1>", lambda e: browse())
         browse_btn.bind("<Enter>", lambda e: browse_btn.configure(bg=t["btn_hover"]))
         browse_btn.bind("<Leave>", lambda e: browse_btn.configure(bg=t["btn_bg"]))
@@ -2754,10 +2742,21 @@ class AgentDashboard:
             self._render_welcome_form()
             return
 
-        # Dashboard mode - compact window (only when switching from setup)
+        # Dashboard mode - restore card chrome, compact window
         if not hasattr(self, '_ui_mode') or self._ui_mode != 'dashboard':
             self._ui_mode = 'dashboard'
             self.root.minsize(500, 400)
+
+            # Restore card chrome (header, separator, footer)
+            self.header.pack(fill=tk.X, pady=(0, 8), before=self.agents_frame)
+            self.sep.pack(fill=tk.X, pady=(0, 8), before=self.agents_frame)
+            self.footer.pack(fill=tk.X, pady=(4, 0), after=self.agents_frame)
+
+            # Restore card fixed width layout
+            self.card.pack_forget()
+            self.card.configure(width=440)
+            self.card.pack(side=tk.LEFT, fill=tk.Y, expand=False)
+
             # Shrink window if it's currently too large
             current_w = self.root.winfo_width()
             current_h = self.root.winfo_height()
