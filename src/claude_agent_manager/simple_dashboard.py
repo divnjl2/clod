@@ -2389,15 +2389,13 @@ class AgentDashboard:
         canvas_window = canvas.create_window((0, 0), window=form_frame, anchor="nw")
 
         def on_configure(e):
+            # CRITICAL: Stretch form_frame to canvas width
+            # Without this, form_frame stays narrow and responsive breakpoint never triggers
+            canvas.itemconfigure(canvas_window, width=e.width)
             canvas.configure(scrollregion=canvas.bbox("all"))
-            # Center horizontally
-            canvas_width = canvas.winfo_width()
-            frame_width = form_frame.winfo_reqwidth()
-            if frame_width < canvas_width:
-                canvas.coords(canvas_window, (canvas_width - frame_width) // 2, 0)
 
-        form_frame.bind("<Configure>", on_configure)
-        canvas.bind("<Configure>", lambda e: on_configure(e))
+        form_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", on_configure)
 
         # Pack - reduced pady for compact layout
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0), pady=12)
