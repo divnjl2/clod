@@ -2377,13 +2377,15 @@ class AgentDashboard:
         from tkinter import filedialog
         t = self.theme
 
-        # Ensure window is large enough for two cards
-        self.root.minsize(900, 600)
-        # Expand window if it's currently too small
-        current_w = self.root.winfo_width()
-        current_h = self.root.winfo_height()
-        if current_w < 1000 or current_h < 650:
-            self.root.geometry("1000x650")
+        # Setup mode - large window for two cards (only when switching from dashboard)
+        if not hasattr(self, '_ui_mode') or self._ui_mode != 'setup':
+            self._ui_mode = 'setup'
+            self.root.minsize(900, 600)
+            # Expand window if it's currently too small
+            current_w = self.root.winfo_width()
+            current_h = self.root.winfo_height()
+            if current_w < 1000 or current_h < 650:
+                self.root.geometry("1000x650")
 
         # Scroll container
         canvas = tk.Canvas(self.agents_frame, bg=t["card_bg"], highlightthickness=0)
@@ -2761,9 +2763,19 @@ class AgentDashboard:
         self.count_lbl.configure(text=f"{count}")
 
         if not self.agents_data:
-            # No agents - show inline creation form
+            # No agents - show inline creation form (setup mode - large window)
             self._render_welcome_form()
             return
+
+        # Dashboard mode - compact window (only when switching from setup)
+        if not hasattr(self, '_ui_mode') or self._ui_mode != 'dashboard':
+            self._ui_mode = 'dashboard'
+            self.root.minsize(500, 400)
+            # Shrink window if it's currently too large
+            current_w = self.root.winfo_width()
+            current_h = self.root.winfo_height()
+            if current_w > 750 or current_h > 550:
+                self.root.geometry("650x500")
 
         # Render cards
         cols = 2 if count > 1 else 1
