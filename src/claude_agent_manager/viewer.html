@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Memory Viewer</title>
+    <style>
+        :root {
+            --bg: #1a1a1a;
+            --card-bg: #252525;
+            --fg: #e8e8e8;
+            --fg-dim: #888;
+            --accent: #4a9eff;
+            --border: #333;
+            --success: #4ade80;
+            --error: #f87171;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        h1 .icon {
+            font-size: 28px;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            color: var(--fg-dim);
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.offline {
+            background: var(--error);
+            animation: none;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 16px;
+        }
+        
+        .card {
+            background: var(--card-bg);
+            border-radius: 8px;
+            padding: 16px;
+            border: 1px solid var(--border);
+        }
+        
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--fg-dim);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .stat:last-child {
+            border-bottom: none;
+        }
+        
+        .stat-label {
+            color: var(--fg-dim);
+        }
+        
+        .stat-value {
+            font-family: 'Consolas', monospace;
+            color: var(--accent);
+        }
+        
+        .memory-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .memory-item {
+            padding: 12px;
+            background: var(--bg);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        
+        .memory-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        .memory-meta {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--fg-dim);
+        }
+        
+        .btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: opacity 0.2s;
+        }
+        
+        .btn:hover {
+            opacity: 0.9;
+        }
+        
+        .btn-secondary {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            color: var(--fg);
+        }
+        
+        .actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+        
+        .error-box {
+            background: rgba(248, 113, 113, 0.1);
+            border: 1px solid var(--error);
+            color: var(--error);
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--fg-dim);
+        }
+        
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        pre {
+            background: var(--bg);
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 12px;
+            font-family: 'Consolas', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>
+                <span class="icon">🧠</span>
+                Claude Memory Viewer
+            </h1>
+            <div class="status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
+        </header>
+        
+        <div id="errorBox" class="error-box" style="display: none;"></div>
+        
+        <div id="loading" class="loading">
+            <div class="loading-spinner"></div>
+            <div>Loading memory data...</div>
+        </div>
+        
+        <div id="content" style="display: none;">
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">Statistics</div>
+                    <div class="stat">
+                        <span class="stat-label">Total Memories</span>
+                        <span class="stat-value" id="totalMemories">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Database Size</span>
+                        <span class="stat-value" id="dbSize">0 KB</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Last Updated</span>
+                        <span class="stat-value" id="lastUpdated">-</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Worker Port</span>
+                        <span class="stat-value" id="workerPort">-</span>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-title">Actions</div>
+                    <div class="actions">
+                        <button class="btn" onclick="refresh()">Refresh</button>
+                        <button class="btn btn-secondary" onclick="exportMemory()">Export</button>
+                        <button class="btn btn-secondary" onclick="clearMemory()">Clear All</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card" style="margin-top: 16px;">
+                <div class="card-title">Recent Memories</div>
+                <div id="memoryList" class="memory-list">
+                    <div class="memory-item">No memories yet</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const port = window.location.port || '3100';
+        const baseUrl = `http://localhost:${port}`;
+        
+        async function fetchAPI(endpoint) {
+            try {
+                const response = await fetch(`${baseUrl}${endpoint}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                throw error;
+            }
+        }
+        
+        async function checkStatus() {
+            try {
+                const data = await fetchAPI('/health');
+                document.getElementById('statusDot').classList.remove('offline');
+                document.getElementById('statusText').textContent = 'Connected';
+                return true;
+            } catch {
+                document.getElementById('statusDot').classList.add('offline');
+                document.getElementById('statusText').textContent = 'Disconnected';
+                return false;
+            }
+        }
+        
+        async function loadStats() {
+            try {
+                const stats = await fetchAPI('/stats');
+                document.getElementById('totalMemories').textContent = stats.count || 0;
+                document.getElementById('dbSize').textContent = formatSize(stats.size || 0);
+                document.getElementById('lastUpdated').textContent = stats.lastUpdated 
+                    ? new Date(stats.lastUpdated).toLocaleString() 
+                    : '-';
+                document.getElementById('workerPort').textContent = port;
+            } catch (error) {
+                console.log('Stats not available');
+            }
+        }
+        
+        async function loadMemories() {
+            try {
+                const memories = await fetchAPI('/memories?limit=20');
+                const list = document.getElementById('memoryList');
+                
+                if (!memories || memories.length === 0) {
+                    list.innerHTML = '<div class="memory-item">No memories stored yet</div>';
+                    return;
+                }
+                
+                list.innerHTML = memories.map(m => `
+                    <div class="memory-item">
+                        <div>${escapeHtml(m.content || m.text || JSON.stringify(m))}</div>
+                        <div class="memory-meta">
+                            <span>ID: ${m.id || '-'}</span>
+                            <span>${m.timestamp ? new Date(m.timestamp).toLocaleString() : ''}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                document.getElementById('memoryList').innerHTML = 
+                    '<div class="memory-item">Could not load memories</div>';
+            }
+        }
+        
+        async function refresh() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('content').style.display = 'none';
+            
+            const online = await checkStatus();
+            if (online) {
+                await loadStats();
+                await loadMemories();
+            }
+            
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'block';
+        }
+        
+        async function exportMemory() {
+            try {
+                const memories = await fetchAPI('/memories');
+                const blob = new Blob([JSON.stringify(memories, null, 2)], {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `memory-export-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                alert('Export failed: ' + error.message);
+            }
+        }
+        
+        async function clearMemory() {
+            if (!confirm('Are you sure you want to clear all memories? This cannot be undone.')) return;
+            try {
+                await fetch(`${baseUrl}/memories`, { method: 'DELETE' });
+                refresh();
+            } catch (error) {
+                alert('Clear failed: ' + error.message);
+            }
+        }
+        
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Initial load
+        refresh();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(checkStatus, 30000);
+    </script>
+</body>
+</html>

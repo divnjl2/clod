@@ -30,6 +30,7 @@ from rich.table import Table
 from . import manager
 from .config import AppConfig, load_config, save_config
 from .core.paths import create_workspace_paths
+from .updater import check_updates_background, print_update_notification, do_update, do_update_from_local
 from .processes import (
     is_pid_running,
     kill_tree,
@@ -42,8 +43,57 @@ from .processes import (
 from .registry import AgentRecord, iter_agents, load_agent, save_agent
 from .tile import tile_two_in_cell
 
+# Import/Export CLI
+from .sharing_cli import preset_app, export_app, import_app, share_command
+
+# Memory tools CLI
+from .memory_tools import create_memory_app
+
+# Crew CLI (native clod agents - no external API!)
+from .crew import create_crew_app
+
+# Subagents commands
+from .subagents import create_subagents_commands
+
 app = typer.Typer(no_args_is_help=True)
+
+# Подключаем подприложения
+app.add_typer(preset_app, name="preset")
+app.add_typer(export_app, name="export")
+app.add_typer(import_app, name="import")
+app.add_typer(create_memory_app(), name="memory", help="Memory inspection tools")
+
+# Crew commands (native agents, no API)
+app.add_typer(create_crew_app(), name="crew", help="Multi-agent crew (no external API)")
+
+# Subagent commands
+enable_cmd, disable_cmd = create_subagents_commands()
+app.command("enable-subagents")(enable_cmd)
+app.command("disable-subagents")(disable_cmd)
+
+# Команда share как отдельная
+app.command("share")(share_command)
+
 console = Console()
+
+# Фоновая проверка обновлений при старте (не блокирует)
+_update_available: Optional[str] = None
+
+def _on_update_found(version: str) -> None:
+    global _update_available
+    _update_available = version
+
+def _show_update_on_exit() -> None:
+    """Показать уведомление об обновлении при выходе."""
+    if _update_available:
+        print_update_notification(_update_available)
+
+# Запускаем проверку в фоне
+check_updates_background(callback=_on_update_found)
+
+# Показываем уведомление при выходе
+import atexit
+atexit.register(_show_update_on_exit)
 
 
 def _dpi_awareness() -> None:
@@ -224,6 +274,8 @@ def new(
     agent_id: Optional[str] = typer.Option(None, "--id"),
     port: Optional[int] = typer.Option(None, "--port"),
     start_browser: bool = typer.Option(True, "--browser/--no-browser", help="Открыть viewer в браузере"),
+    enable_subagents: bool = typer.Option(False, "--subagents", "-s", help="Включить создание субагентов"),
+    max_subagents: int = typer.Option(5, "--max-subagents", help="Макс. кол-во субагентов"),
 ) -> None:
     """Создать нового агента (worker+viewer+claude window) с изолированной памятью."""
     cfg = load_config()
@@ -241,6 +293,12 @@ def new(
         cfg=cfg,
     )
     console.print(f"Created agent: {rec.id} (port={rec.port})")
+
+    # Включаем субагентов если запрошено
+    if enable_subagents:
+        from .subagents import enable_subagents as do_enable_subagents
+        do_enable_subagents(rec.id, max_subagents)
+        console.print(f"[cyan]Sub-agents enabled (max: {max_subagents})[/cyan]")
 
 
 @app.command()
@@ -508,3 +566,97 @@ def doctor() -> None:
         console.print(f"  [green]✓[/green] {db_path} ({size_mb:.2f} MB)")
     else:
         console.print(f"  [yellow]![/yellow] Database not found (will be created on first use)")
+
+
+@app.command()
+def update(
+    force: bool = typer.Option(False, "--force", "-f", help="Принудительное обновление"),
+    local: Optional[str] = typer.Option(None, "--local", "-l", help="Установить из локальной директории"),
+) -> None:
+    """Проверить и установить обновления."""
+    if local:
+        do_update_from_local(local)
+    else:
+        do_update(force=force)
+
+
+@app.command("check-update")
+def check_update() -> None:
+    """Проверить наличие обновлений (без установки)."""
+    from .updater import check_for_updates, get_current_version
+    
+    console.print(f"[dim]Текущая версия: {get_current_version()}[/dim]")
+    console.print("[cyan]Проверяю...[/cyan]")
+    
+    new_version = check_for_updates(silent=False)
+    if new_version:
+        print_update_notification(new_version)
+    else:
+        console.print("[green]✓[/green] Установлена последняя версия")
+
+
+@app.command("memory-doctor")
+def memory_doctor(
+    agent_id: Optional[str] = typer.Argument(None, help="ID агента (все если не указан)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Подробный вывод"),
+) -> None:
+    """Диагностика изоляции памяти агентов."""
+    from .memory_diagnostics import (
+        diagnose_agent_memory,
+        diagnose_all_agents,
+        print_diagnostics_report,
+        print_agent_detail,
+    )
+    
+    cfg = load_config()
+    agent_root = Path(cfg.agent_root)
+    agents = [a.model_dump() for a in iter_agents(agent_root)]
+
+    if not agents:
+        console.print("[yellow]No agents found[/yellow]")
+        return
+
+    if agent_id:
+        # Диагностика одного агента
+        agent = next((a for a in agents if a["id"] == agent_id), None)
+        if not agent:
+            console.print(f"[red]Agent not found: {agent_id}[/red]")
+            return
+
+        diag = diagnose_agent_memory(
+            agent_id=agent["id"],
+            port=agent["port"],
+            agent_dir=agent_root / agent["id"],
+            project_path=Path(agent["project_path"]),
+            pm2_name=agent.get("pm2_name", f"agent-{agent_id}"),
+            all_agents=agents
+        )
+        print_agent_detail(diag)
+    else:
+        # Диагностика всех агентов
+        console.print(f"[bold]Diagnosing {len(agents)} agents...[/bold]\n")
+        diagnostics = diagnose_all_agents(agent_root, agents)
+        print_diagnostics_report(diagnostics)
+
+        if verbose:
+            console.print("\n[bold]Detailed Reports:[/bold]")
+            for agent_id, diag in diagnostics.items():
+                console.print()
+                print_agent_detail(diag)
+
+
+@app.command("memory-verify")
+def memory_verify() -> None:
+    """Live-проверка изоляции памяти между агентами."""
+    from .memory_diagnostics import verify_isolation_live
+
+    cfg = load_config()
+    agent_root = Path(cfg.agent_root)
+    agents = [a.model_dump() for a in iter_agents(agent_root)]
+
+    if not agents:
+        console.print("[yellow]No agents found[/yellow]")
+        return
+
+    verify_isolation_live(agents, agent_root)
+

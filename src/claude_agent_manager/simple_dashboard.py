@@ -1225,6 +1225,7 @@ class AgentConfigDialog:
         # Load current permissions from agent
         from .registry import PermissionConfig, PERMISSION_PRESETS, get_permission_preset
         self.current_permissions = PermissionConfig()
+        self.agent_autopilot_enabled = False
 
         if HAS_BACKEND and manager:
             try:
@@ -1232,8 +1233,102 @@ class AgentConfigDialog:
                 agent_root = manager.get_agent_root()
                 agent = load_agent(agent_root, self.agent_data["id"])
                 self.current_permissions = agent.permissions
+                self.agent_autopilot_enabled = getattr(agent, 'autopilot_enabled', False)
+                # If autopilot is enabled, override preset to show "autopilot"
+                if self.agent_autopilot_enabled:
+                    self.current_permissions.preset = "autopilot"
             except Exception:
                 pass
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # AUTOPILOT TOGGLE - Card style with ToggleSwitch
+        # ═══════════════════════════════════════════════════════════════════════
+        # Outer card with border
+        autopilot_card = tk.Frame(
+            self.permissions_frame,
+            bg=t["btn_bg"],
+            highlightbackground="#ff9500" if self.agent_autopilot_enabled else t["border"],
+            highlightthickness=1
+        )
+        autopilot_card.pack(fill=tk.X, pady=(0, 16))
+
+        # Inner content
+        autopilot_inner = tk.Frame(autopilot_card, bg=t["btn_bg"])
+        autopilot_inner.pack(fill=tk.X, padx=12, pady=10)
+
+        # Left side: icon + text
+        autopilot_left = tk.Frame(autopilot_inner, bg=t["btn_bg"])
+        autopilot_left.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Title row
+        title_row = tk.Frame(autopilot_left, bg=t["btn_bg"])
+        title_row.pack(fill=tk.X)
+
+        tk.Label(
+            title_row, text="⚡",
+            font=("Segoe UI", 14), bg=t["btn_bg"], fg="#ff9500"
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            title_row, text="Autopilot Mode",
+            font=("Segoe UI", 10, "bold"), bg=t["btn_bg"],
+            fg="#ff9500" if self.agent_autopilot_enabled else t["fg"]
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        # Status badge
+        status_text = "ACTIVE" if self.agent_autopilot_enabled else "OFF"
+        status_color = "#4ade80" if self.agent_autopilot_enabled else t["fg_dim"]
+        self.autopilot_status = tk.Label(
+            title_row, text=f" {status_text} ",
+            font=("Consolas", 7, "bold"), bg=t["btn_bg"], fg=status_color
+        )
+        self.autopilot_status.pack(side=tk.LEFT, padx=(8, 0))
+
+        # Description
+        tk.Label(
+            autopilot_left,
+            text="Full autonomy - no permission prompts",
+            font=("Segoe UI", 8), bg=t["btn_bg"], fg=t["fg_dim"]
+        ).pack(anchor="w", pady=(2, 0))
+
+        # Right side: Toggle switch
+        self.autopilot_enabled = self.agent_autopilot_enabled
+
+        def on_autopilot_switch(state: bool):
+            self.autopilot_enabled = state
+            # Update visual feedback
+            status_text = "ACTIVE" if state else "OFF"
+            status_color = "#4ade80" if state else t["fg_dim"]
+            self.autopilot_status.configure(text=f" {status_text} ", fg=status_color)
+            # Update card border
+            border_color = "#ff9500" if state else t["border"]
+            autopilot_card.configure(highlightbackground=border_color)
+            # If enabling, auto-select autopilot preset
+            if state:
+                self.perm_preset_var.set("autopilot")
+                for i, btn in enumerate(self.preset_buttons):
+                    preset = ["default", "strict", "permissive", "autopilot", "custom"][i]
+                    if preset == "autopilot":
+                        btn.configure(bg=t["accent"], fg="#fff")
+                    else:
+                        btn.configure(bg=t["btn_bg"], fg=t["fg"])
+                self._update_preset_desc()
+
+        self.autopilot_switch = ToggleSwitch(
+            autopilot_inner,
+            width=44, height=22,
+            on_toggle=on_autopilot_switch,
+            initial=self.agent_autopilot_enabled,
+            bg=t["btn_bg"]
+        )
+        self.autopilot_switch.pack(side=tk.RIGHT, padx=(8, 0))
+
+        # Warning text below card
+        tk.Label(
+            self.permissions_frame,
+            text="⚠️ Autopilot allows ALL actions without confirmation. Use with caution!",
+            font=("Segoe UI", 7), bg=t["card_bg"], fg="#f87171"
+        ).pack(anchor="w", pady=(0, 12))
 
         # Preset selector
         tk.Label(
@@ -1246,7 +1341,7 @@ class AgentConfigDialog:
         preset_frame.pack(fill=tk.X, pady=(0, 12))
 
         self.preset_buttons = []
-        for preset in ["default", "strict", "permissive", "custom"]:
+        for preset in ["default", "strict", "permissive", "autopilot", "custom"]:
             btn = tk.Label(
                 preset_frame, text=preset.title(),
                 font=("Segoe UI", 8),
@@ -1325,6 +1420,7 @@ class AgentConfigDialog:
             "default": "Balanced permissions - read access, common dev tools (git, npm, pip, python), MCP servers. Blocks dangerous commands.",
             "strict": "Minimal permissions - read-only, limited git (status/diff/log), grep/ls/cat only. No network tools.",
             "permissive": "Full development access - read/write/edit, all dev tools, docker, process management. Only blocks destructive root commands.",
+            "autopilot": "⚠️ FULL AUTONOMY - No permission prompts! Agent can execute ANY action without confirmation. Use with extreme caution.",
             "custom": "Define your own allow/deny rules manually in the text fields below."
         }
         self.preset_desc.configure(text=descriptions.get(preset, ""))
@@ -1383,7 +1479,7 @@ class AgentConfigDialog:
         # 5. Save permissions
         if HAS_BACKEND and manager and hasattr(self, 'perm_preset_var'):
             try:
-                from .registry import PermissionConfig, update_agent_permissions
+                from .registry import PermissionConfig, update_agent_permissions, update_agent_autopilot
 
                 # Parse allow/deny rules from text
                 allow_text = self.allow_text.get("1.0", tk.END).strip()
@@ -1392,8 +1488,9 @@ class AgentConfigDialog:
                 allow_rules = [r.strip() for r in allow_text.split("\n") if r.strip()]
                 deny_rules = [r.strip() for r in deny_text.split("\n") if r.strip()]
 
+                preset = self.perm_preset_var.get()
                 perm_config = PermissionConfig(
-                    preset=self.perm_preset_var.get(),
+                    preset=preset,
                     allow=allow_rules,
                     deny=deny_rules
                 )
@@ -1401,7 +1498,12 @@ class AgentConfigDialog:
                 # Update agent and write .claude/settings.json
                 agent_root = manager.get_agent_root()
                 update_agent_permissions(agent_root, self.agent_data["id"], perm_config)
-                print(f"Permissions saved to .claude/settings.json")
+
+                # Update autopilot_enabled flag from toggle switch
+                is_autopilot = getattr(self, 'autopilot_enabled', False)
+                update_agent_autopilot(agent_root, self.agent_data["id"], is_autopilot)
+
+                print(f"Permissions saved to .claude/settings.json (autopilot={is_autopilot})")
             except Exception as e:
                 print(f"Error saving permissions: {e}")
                 import traceback
@@ -1457,35 +1559,74 @@ class AgentCard(tk.Frame):
         self.left = tk.Frame(self.content, bg=t["card_bg"])
         self.left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Top row
+        # Top row: Status dot + Name (editable) + Port
         self.top = tk.Frame(self.left, bg=t["card_bg"])
-        self.top.pack(anchor="w")
+        self.top.pack(fill=tk.X)
 
         self.status_dot = StatusDot(self.top, online=(status == "online"), theme=t)
         self.status_dot.pack(side=tk.LEFT, padx=(0, 5))
         self.status_dot.configure(bg=t["card_bg"])
 
-        short_id = agent["id"][:10] if len(agent["id"]) > 10 else agent["id"]
-        self.id_lbl = tk.Label(self.top, text=short_id, font=("Segoe UI Semibold", 9), bg=t["card_bg"], fg=t["fg"])
-        self.id_lbl.pack(side=tk.LEFT)
-
-        # Purpose / Display name (with edit icon)
+        # Name/Purpose - главный элемент (с иконкой редактирования)
         name = agent.get("display_name") or agent["purpose"]
-        name_truncated = name[:20] + "..." if len(name) > 20 else name
-        self.purpose_lbl = tk.Label(self.left, text=f"{name_truncated} ✎", font=("Segoe UI", 8), bg=t["card_bg"], fg=t["fg_dim"], cursor="hand2")
-        self.purpose_lbl.pack(anchor="w", pady=(1, 0))
+        name_truncated = name[:18] + "…" if len(name) > 18 else name
+        self.purpose_lbl = tk.Label(
+            self.top, 
+            text=f"{name_truncated} ✎", 
+            font=("Segoe UI Semibold", 9), 
+            bg=t["card_bg"], 
+            fg=t["fg"], 
+            cursor="hand2"
+        )
+        self.purpose_lbl.pack(side=tk.LEFT)
 
-        # Port + Memory indicator
-        info_frame = tk.Frame(self.left, bg=t["card_bg"])
-        info_frame.pack(anchor="w")
+        # Port - справа в той же строке
+        self.port_lbl = tk.Label(
+            self.top, 
+            text=f":{agent['port']}", 
+            font=("Consolas", 8), 
+            bg=t["card_bg"], 
+            fg=t["accent"]
+        )
+        self.port_lbl.pack(side=tk.RIGHT, padx=(4, 0))
 
-        self.port_lbl = tk.Label(info_frame, text=f":{agent['port']}", font=("Consolas", 7), bg=t["card_bg"], fg=t["fg_dim"])
-        self.port_lbl.pack(side=tk.LEFT)
+        # Bottom row: ID + Memory indicator
+        self.info_frame = tk.Frame(self.left, bg=t["card_bg"])
+        self.info_frame.pack(fill=tk.X, pady=(2, 0))
+
+        # Short ID
+        short_id = agent["id"][:12] if len(agent["id"]) > 12 else agent["id"]
+        self.id_lbl = tk.Label(
+            self.info_frame, 
+            text=short_id, 
+            font=("Consolas", 7), 
+            bg=t["card_bg"], 
+            fg=t["fg_dim"]
+        )
+        self.id_lbl.pack(side=tk.LEFT)
 
         # Memory indicator (worker status)
         mem_color = t["online"] if status == "online" else t["fg_dim"]
-        self.mem_lbl = tk.Label(info_frame, text=" ● mem", font=("Consolas", 7), bg=t["card_bg"], fg=mem_color)
-        self.mem_lbl.pack(side=tk.LEFT, padx=(4, 0))
+        self.mem_lbl = tk.Label(
+            self.info_frame,
+            text="● mem",
+            font=("Consolas", 7),
+            bg=t["card_bg"],
+            fg=mem_color
+        )
+        self.mem_lbl.pack(side=tk.LEFT, padx=(8, 0))
+
+        # Autopilot indicator
+        self.autopilot_badge = None
+        if agent.get("autopilot_enabled", False):
+            self.autopilot_badge = tk.Label(
+                self.info_frame,
+                text=" ⚡ auto",
+                font=("Consolas", 7),
+                bg=t["card_bg"],
+                fg=t["accent"]
+            )
+            self.autopilot_badge.pack(side=tk.LEFT, padx=(4, 0))
 
         # Toggle button
         btn_style = "stop" if status == "online" else "start"
@@ -1504,7 +1645,9 @@ class AgentCard(tk.Frame):
         )
         self.toggle_btn.pack(side=tk.RIGHT, padx=(6, 0))
 
-        self._widgets = [self.content, self.left, self.top, self.id_lbl, self.purpose_lbl, info_frame, self.port_lbl, self.mem_lbl]
+        self._widgets = [self.content, self.left, self.top, self.purpose_lbl, self.port_lbl, self.info_frame, self.id_lbl, self.mem_lbl]
+        if self.autopilot_badge:
+            self._widgets.append(self.autopilot_badge)
 
     def _bind_events(self):
         for w in self._widgets:
@@ -1562,10 +1705,10 @@ class AgentCard(tk.Frame):
         # Hide label
         self.purpose_lbl.pack_forget()
 
-        # Create entry
+        # Create entry in same parent as purpose_lbl (self.top)
         self._name_entry = tk.Entry(
-            self.left,
-            font=("Segoe UI", 8),
+            self.top,
+            font=("Segoe UI Semibold", 9),
             bg=t["btn_bg"],
             fg=t["fg"],
             insertbackground=t["fg"],
@@ -1574,10 +1717,10 @@ class AgentCard(tk.Frame):
             highlightthickness=1,
             highlightbackground=t["accent"],
             highlightcolor=t["accent"],
-            width=20
+            width=18
         )
         self._name_entry.insert(0, current_name)
-        self._name_entry.pack(anchor="w", pady=(1, 0))
+        self._name_entry.pack(side=tk.LEFT)  # Same position as purpose_lbl
         self._name_entry.focus_set()
         self._name_entry.select_range(0, tk.END)
 
@@ -1660,17 +1803,28 @@ class AgentCard(tk.Frame):
     def update_theme(self, theme: Dict):
         self.theme = theme
         t = theme
-        # Update border
-        self.configure(highlightbackground=t["border"])
-        # Update all widgets
         bg = t["card_bg"]
-        self.configure(bg=bg)
+        
+        # Update border
+        self.configure(highlightbackground=t["border"], bg=bg)
+        
+        # Update all frames
         self.content.configure(bg=bg)
         self.left.configure(bg=bg)
         self.top.configure(bg=bg)
-        self.id_lbl.configure(bg=bg, fg=t["fg"])
-        self.purpose_lbl.configure(bg=bg, fg=t["fg_dim"])
-        self.port_lbl.configure(bg=bg, fg=t["fg_dim"])
+        self.info_frame.configure(bg=bg)
+        
+        # Update labels with correct colors from new layout
+        self.purpose_lbl.configure(bg=bg, fg=t["fg"])  # Name is primary - fg color
+        self.port_lbl.configure(bg=bg, fg=t["accent"])  # Port is accent color
+        self.id_lbl.configure(bg=bg, fg=t["fg_dim"])  # ID is dimmed
+        
+        # Update memory indicator
+        status = self.agent_data.get("status", "offline")
+        mem_color = t["online"] if status == "online" else t["fg_dim"]
+        self.mem_lbl.configure(bg=bg, fg=mem_color)
+        
+        # Update status dot and button
         self.status_dot.configure(bg=bg)
         self.status_dot.update_theme(t)
         self.toggle_btn.update_theme(t)
@@ -2172,6 +2326,7 @@ class AgentDashboard:
                         "cmd_running": getattr(agent, 'cmd_running', False),
                         "viewer_running": getattr(agent, 'viewer_running', False),
                         "proxy": getattr(agent, 'proxy', None) or {},
+                        "autopilot_enabled": getattr(agent, 'autopilot_enabled', False),
                     })
             except Exception as e:
                 print(f"Fetch agents error: {e}")
@@ -2215,7 +2370,7 @@ class AgentDashboard:
         from tkinter import filedialog
         t = self.theme
 
-        # Main container
+        # Main container with scroll
         form_frame = tk.Frame(self.agents_frame, bg=t["card_bg"])
         form_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
 
@@ -2244,10 +2399,121 @@ class AgentDashboard:
         ).pack(pady=(0, 4))
 
         tk.Label(
-            top, text="Fill in the details below to get started",
+            top, text="Choose a preset or create custom agent",
             font=("Segoe UI", 9),
             bg=t["card_bg"], fg=t["fg_dim"]
         ).pack(pady=(0, 16))
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # QUICK START - Preset buttons
+        # ═══════════════════════════════════════════════════════════════════════
+        presets_frame = tk.Frame(form_frame, bg=t["card_bg"])
+        presets_frame.pack(fill=tk.X, pady=(0, 16))
+
+        tk.Label(
+            presets_frame, text="⚡ QUICK START",
+            font=("Segoe UI", 9, "bold"),
+            bg=t["card_bg"], fg=t["accent"]
+        ).pack(anchor="w", pady=(0, 8))
+
+        # Preset buttons grid
+        presets_grid = tk.Frame(presets_frame, bg=t["card_bg"])
+        presets_grid.pack(fill=tk.X)
+
+        # Define presets with icons
+        quick_presets = [
+            ("🌐", "web-developer", "Web Dev", "Full-stack веб-разработка"),
+            ("📊", "data-analyst", "Data", "Анализ данных, Python, ML"),
+            ("🔍", "code-reviewer", "Review", "Code review (read-only)"),
+            ("🚀", "devops", "DevOps", "Docker, K8s, Terraform"),
+            ("📚", "researcher", "Research", "Веб-поиск, анализ"),
+        ]
+
+        def create_from_preset(preset_name: str):
+            """Open dialog to select project and create agent from preset."""
+            project = filedialog.askdirectory(parent=self.root, title="Select Project Directory")
+            if not project:
+                return
+
+            if HAS_BACKEND:
+                try:
+                    from .sharing import get_builtin_preset, apply_preset
+                    from .registry import save_agent
+                    from .worker import pick_port
+                    import uuid
+
+                    preset = get_builtin_preset(preset_name)
+                    if not preset:
+                        print(f"Preset not found: {preset_name}")
+                        return
+
+                    cfg = load_config()
+                    agent_root = Path(cfg.agent_root)
+                    agent_root.mkdir(parents=True, exist_ok=True)
+
+                    # Generate ID and port
+                    agent_id = f"{preset_name}-{uuid.uuid4().hex[:6]}"
+                    used_ports = set()
+                    port = pick_port(cfg, used_ports)
+
+                    # Create agent from preset
+                    agent = apply_preset(
+                        preset=preset,
+                        agent_id=agent_id,
+                        project_path=project,
+                        port=port,
+                    )
+                    save_agent(agent_root, agent)
+
+                    print(f"Created agent: {agent_id}")
+                    self.root.after(1500, self._load_agents)
+                except Exception as e:
+                    print(f"Create from preset error: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+        for i, (icon, preset_id, label, desc) in enumerate(quick_presets):
+            btn_frame = tk.Frame(presets_grid, bg=t["btn_bg"], cursor="hand2")
+            btn_frame.grid(row=i // 3, column=i % 3, padx=2, pady=2, sticky="nsew")
+
+            # Icon + label
+            tk.Label(
+                btn_frame, text=f"{icon} {label}",
+                font=("Segoe UI", 9, "bold"),
+                bg=t["btn_bg"], fg=t["fg"],
+                padx=8, pady=4
+            ).pack(anchor="w")
+
+            # Description
+            tk.Label(
+                btn_frame, text=desc,
+                font=("Segoe UI", 7),
+                bg=t["btn_bg"], fg=t["fg_dim"],
+                padx=8
+            ).pack(anchor="w", pady=(0, 4))
+
+            # Bind click to frame and all children
+            def bind_click(widget, pid=preset_id):
+                widget.bind("<Button-1>", lambda e: create_from_preset(pid))
+                widget.bind("<Enter>", lambda e, w=widget.master: w.configure(bg=t["btn_hover"]) or [c.configure(bg=t["btn_hover"]) for c in w.winfo_children()])
+                widget.bind("<Leave>", lambda e, w=widget.master: w.configure(bg=t["btn_bg"]) or [c.configure(bg=t["btn_bg"]) for c in w.winfo_children()])
+
+            bind_click(btn_frame, preset_id)
+            for child in btn_frame.winfo_children():
+                bind_click(child, preset_id)
+
+        # Configure grid columns
+        for c in range(3):
+            presets_grid.columnconfigure(c, weight=1)
+
+        # Separator
+        tk.Frame(form_frame, bg=t["separator"], height=1).pack(fill=tk.X, pady=(8, 16))
+
+        tk.Label(
+            form_frame, text="OR CREATE CUSTOM",
+            font=("Segoe UI", 8),
+            bg=t["card_bg"], fg=t["fg_dim"]
+        ).pack(pady=(0, 8))
 
         # Form fields
         fields_frame = tk.Frame(form_frame, bg=t["card_bg"])

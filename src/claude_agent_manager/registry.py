@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 # Permission preset types
-PermissionPreset = Literal["default", "strict", "permissive", "custom"]
+PermissionPreset = Literal["default", "strict", "permissive", "autopilot", "custom"]
 
 
 class PermissionConfig(BaseModel):
@@ -111,6 +111,28 @@ PERMISSION_PRESETS = {
             "Bash(chmod 777 /*)",
         ]
     },
+    # Autopilot mode: Full autonomy, no permission prompts
+    # Equivalent to --dangerously-skip-permissions CLI flag
+    # Use with caution - agent can execute ANY action without confirmation
+    "autopilot": {
+        "allow": [
+            # Universal wildcard - allows ALL tools without prompts
+            "*",
+            # Explicit tool names for maximum compatibility
+            "Read(*)",
+            "Write(*)",
+            "Edit(*)",
+            "Glob(*)",
+            "Grep(*)",
+            "Bash",  # No parentheses = all commands
+            "Task(*)",
+            "mcp__*",
+            "WebFetch",  # No parentheses = all domains
+            "WebSearch",
+            "NotebookEdit(*)",
+        ],
+        "deny": []  # No denials in autopilot mode
+    },
     "custom": {
         "allow": [],
         "deny": []
@@ -158,26 +180,47 @@ class AgentConfigOptions(BaseModel):
 
 class AgentRecord(BaseModel):
     id: str
-    purpose: str
+    purpose: str = ""
     display_name: Optional[str] = None  # Custom display name (falls back to purpose if None)
-    project_path: str
-    port: int
-    pm2_name: str
+    project_path: str = ""
+
+    # Адаптивная система портов
+    port_min: int = 37700  # Минимум диапазона
+    port_max: int = 37799  # Максимум диапазона
+    last_port: Optional[int] = None  # Последний успешно использованный порт
+
+    # Deprecated: старое поле для обратной совместимости
+    port: Optional[int] = None  # Будет мигрировано в last_port
+
+    pm2_name: str = ""
     cmd_pid: Optional[int] = None
     viewer_pid: Optional[int] = None
     use_browser: bool = False
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     config: AgentConfigOptions = Field(default_factory=AgentConfigOptions)
     permissions: PermissionConfig = Field(default_factory=PermissionConfig)
+    autopilot_enabled: bool = False  # Full autonomy mode - no permission prompts
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     active_run_id: Optional[str] = None
+
+    def get_preferred_port(self) -> Optional[int]:
+        """Получить предпочтительный порт (last_port или мигрированный port)."""
+        return self.last_port or self.port
 
     def get_display_name(self) -> str:
         """Get display name, falling back to purpose if not set."""
         return self.display_name if self.display_name else self.purpose
 
     def get_effective_permissions(self) -> dict:
-        """Get effective permissions (preset + custom overrides)."""
+        """Get effective permissions (preset + custom overrides).
+
+        If autopilot_enabled is True, returns autopilot preset regardless
+        of the configured preset. This provides full autonomy mode.
+        """
+        # Autopilot mode overrides everything
+        if self.autopilot_enabled:
+            return get_permission_preset("autopilot")
+
         preset_perms = get_permission_preset(self.permissions.preset)
 
         if self.permissions.preset == "custom":
@@ -297,6 +340,33 @@ def update_agent_permissions(agent_root: Path, agent_id: str, permissions: Permi
     save_agent(agent_root, agent)
 
     # Write to project .claude/settings.json
+    project_path = Path(agent.project_path)
+    write_claude_settings(project_path, agent)
+
+    return agent
+
+
+def update_agent_autopilot(agent_root: Path, agent_id: str, enabled: bool) -> AgentRecord:
+    """
+    Update agent autopilot mode and write to .claude/settings.json.
+
+    When autopilot is enabled, the agent gets full autonomy - all tools
+    are allowed without permission prompts. This is equivalent to running
+    Claude Code with --dangerously-skip-permissions flag.
+
+    Args:
+        agent_root: Path to agents root directory
+        agent_id: Agent ID
+        enabled: Whether to enable autopilot mode
+
+    Returns:
+        Updated agent record
+    """
+    agent = load_agent(agent_root, agent_id)
+    agent.autopilot_enabled = enabled
+    save_agent(agent_root, agent)
+
+    # Write to project .claude/settings.json with updated permissions
     project_path = Path(agent.project_path)
     write_claude_settings(project_path, agent)
 

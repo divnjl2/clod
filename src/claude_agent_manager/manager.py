@@ -33,7 +33,15 @@ from .core.locks import FileLock
 from .core.models import AgentSpec, RunSpec
 from .core.registry import Registry
 from .core.runner_env import RunnerEnv, build_run_sandbox_env
-from .registry import AgentConfigOptions, AgentRecord, ProxyConfig, iter_agents, load_agent, save_agent
+from .registry import (
+    AgentConfigOptions,
+    AgentRecord,
+    ProxyConfig,
+    iter_agents,
+    load_agent,
+    save_agent,
+    update_agent_autopilot,
+)
 from .agent_config import (
     apply_agent_config,
     build_default_mcp_servers,
@@ -61,6 +69,7 @@ class AgentStatus:
     project_path: str
     proxy: Optional[dict] = None  # Proxy config as dict for serialization
     display_name: Optional[str] = None  # Custom display name
+    autopilot_enabled: bool = False  # Full autonomy mode
 
 
 def get_agent_root(cfg: Optional[AppConfig] = None) -> Path:
@@ -626,6 +635,38 @@ def update_display_name(agent_id: str, display_name: Optional[str], cfg: Optiona
     return updated
 
 
+def update_autopilot(agent_id: str, enabled: bool, cfg: Optional[AppConfig] = None) -> AgentRecord:
+    """
+    Update autopilot mode for an agent.
+
+    When autopilot is enabled, the agent gets full autonomy - all tools
+    are allowed without permission prompts. This is equivalent to running
+    Claude Code with --dangerously-skip-permissions flag.
+
+    IMPORTANT: Changes take effect on next agent restart. The settings are
+    written to .claude/settings.json immediately, but Claude Code only
+    reads this file on startup.
+
+    Args:
+        agent_id: The agent ID
+        enabled: Whether to enable autopilot mode
+        cfg: Optional config
+
+    Returns:
+        Updated AgentRecord
+    """
+    if cfg is None:
+        cfg = load_config()
+
+    agent_root = get_agent_root(cfg)
+
+    # Use registry function to update and sync settings
+    updated = update_agent_autopilot(agent_root, agent_id, enabled)
+
+    logger.info(f"[AGENT] update_autopilot | id={agent_id} enabled={enabled}")
+    return updated
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # STATUS & LISTING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -653,6 +694,7 @@ def get_status(agent_id: str, cfg: Optional[AppConfig] = None) -> AgentStatus:
         use_browser=agent.use_browser,
         project_path=agent.project_path,
         display_name=agent.display_name,
+        autopilot_enabled=agent.autopilot_enabled,
     )
 
 
@@ -682,6 +724,7 @@ def list_agents(cfg: Optional[AppConfig] = None) -> List[AgentStatus]:
             project_path=agent.project_path,
             proxy=agent.proxy.model_dump() if agent.proxy else None,
             display_name=agent.display_name,
+            autopilot_enabled=agent.autopilot_enabled,
         ))
 
     return result
