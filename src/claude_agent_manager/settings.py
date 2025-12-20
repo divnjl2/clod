@@ -41,7 +41,7 @@ class AppSettings:
     hotkey_focus_agent_2: str = "ctrl+alt+2"  # Focus agent 2 window
     hotkey_focus_agent_3: str = "ctrl+alt+3"  # Focus agent 3 window
     hotkey_focus_agent_4: str = "ctrl+alt+4"  # Focus agent 4 window
-    hotkey_toggle_dashboard: str = "ctrl+alt+d"  # Show/hide dashboard
+    hotkey_toggle_dashboard: str = "ctrl+shift+d"  # Show/hide dashboard (ctrl+shift works in RDP)
 
     # Polling
     poll_interval_ms: int = 1500

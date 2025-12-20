@@ -2265,13 +2265,18 @@ class AgentDashboard:
         self._hotkey_poll_id = self.root.after(100, self._process_hotkey_callbacks)
 
     def _toggle_dashboard_visibility(self):
-        """Toggle dashboard window visibility."""
+        """Toggle dashboard window visibility (always on top when shown)."""
         try:
-            if self.root.state() == 'withdrawn':
+            if self.root.state() == 'withdrawn' or self.root.state() == 'iconic':
+                # Show window on top of all others
                 self.root.deiconify()
+                self.root.attributes('-topmost', True)
                 self.root.lift()
                 self.root.focus_force()
+                # Remove topmost after a short delay so it doesn't stay always on top
+                self.root.after(100, lambda: self.root.attributes('-topmost', False))
             else:
+                # Hide window
                 self.root.withdraw()
         except Exception as e:
             print(f"Toggle visibility error: {e}")
