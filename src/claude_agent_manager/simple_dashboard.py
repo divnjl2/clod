@@ -2393,9 +2393,9 @@ class AgentDashboard:
         form_frame.bind("<Configure>", on_configure)
         canvas.bind("<Configure>", lambda e: on_configure(e))
 
-        # Pack
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0), pady=20)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 20), pady=20)
+        # Pack - reduced pady for compact layout
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0), pady=12)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 20), pady=12)
 
         # Mouse wheel scroll
         def on_mousewheel(event):
@@ -2406,17 +2406,17 @@ class AgentDashboard:
         top = tk.Frame(form_frame, bg=t["card_bg"])
         top.pack(fill=tk.X)
 
-        # Welcome icon - use app logo
+        # Welcome icon - use app logo (compact 48px for less vertical space)
         icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
         if icon_path.exists():
             try:
                 self._welcome_icon = tk.PhotoImage(file=str(icon_path))
-                factor = max(1, self._welcome_icon.width() // 80)
+                factor = max(1, self._welcome_icon.width() // 48)
                 self._welcome_icon = self._welcome_icon.subsample(factor, factor)
                 tk.Label(
                     top, image=self._welcome_icon,
                     bg=t["card_bg"], borderwidth=0
-                ).pack(pady=(0, 8))
+                ).pack(pady=(0, 6))
             except:
                 pass
 
@@ -2430,7 +2430,7 @@ class AgentDashboard:
             top, text="Choose a preset or create custom agent",
             font=("Segoe UI", 9),
             bg=t["card_bg"], fg=t["fg_dim"]
-        ).pack(pady=(0, 16))
+        ).pack(pady=(0, 8))
 
         # ═══════════════════════════════════════════════════════════════════════
         # QUICK START - Preset buttons (responsive grid)
@@ -2503,15 +2503,19 @@ class AgentDashboard:
             Called on window resize. Uses cache to prevent infinite loops:
             - Only rebuilds if column count changed
             - Stores last_cols to detect actual changes
+            - Breakpoints: <380px (1 col), <520px (2 cols), >=520px (3 cols)
             """
             # Calculate columns based on window width
             width = canvas.winfo_width() if canvas.winfo_width() > 1 else 600
-            if width < 400:
+            if width < 380:
                 cols = 1
-            elif width < 650:
+                wrap = 260  # wraplength for description
+            elif width < 520:
                 cols = 2
+                wrap = 160
             else:
                 cols = 3
+                wrap = 120
 
             # Only rebuild if columns changed (prevent infinite loop)
             if cols == self._welcome_last_cols:
@@ -2523,6 +2527,12 @@ class AgentDashboard:
             for btn in self._welcome_preset_buttons:
                 btn.destroy()
             self._welcome_preset_buttons.clear()
+
+            # Helper: set card background color (card + all children)
+            def set_card_bg(card: tk.Frame, bg: str):
+                card.configure(bg=bg)
+                for child in card.winfo_children():
+                    child.configure(bg=bg)
 
             # Create buttons
             for i, (icon, preset_id, label, desc) in enumerate(quick_presets):
@@ -2538,23 +2548,25 @@ class AgentDashboard:
                     padx=8, pady=4
                 ).pack(anchor="w")
 
-                # Description
+                # Description - with wraplength to prevent stretching grid
                 tk.Label(
                     btn_frame, text=desc,
                     font=("Segoe UI", 7),
                     bg=t["btn_bg"], fg=t["fg_dim"],
-                    padx=8
+                    padx=8,
+                    wraplength=wrap,
+                    justify="left"
                 ).pack(anchor="w", pady=(0, 4))
 
-                # Bind click to frame and all children
-                def bind_click(widget, pid=preset_id):
+                # Bind click and hover to card (not widget.master!)
+                def bind_to_card(widget, card, pid):
                     widget.bind("<Button-1>", lambda e: create_from_preset(pid))
-                    widget.bind("<Enter>", lambda e, w=widget.master: w.configure(bg=t["btn_hover"]) or [c.configure(bg=t["btn_hover"]) for c in w.winfo_children()])
-                    widget.bind("<Leave>", lambda e, w=widget.master: w.configure(bg=t["btn_bg"]) or [c.configure(bg=t["btn_bg"]) for c in w.winfo_children()])
+                    widget.bind("<Enter>", lambda e: set_card_bg(card, t["btn_hover"]))
+                    widget.bind("<Leave>", lambda e: set_card_bg(card, t["btn_bg"]))
 
-                bind_click(btn_frame, preset_id)
+                bind_to_card(btn_frame, btn_frame, preset_id)
                 for child in btn_frame.winfo_children():
-                    bind_click(child, preset_id)
+                    bind_to_card(child, btn_frame, preset_id)
 
             # Configure grid columns with equal weight
             for c in range(cols):
@@ -2746,9 +2758,10 @@ class AgentDashboard:
         """Show themed dialog to create new agent.
 
         Auto-sizing enabled for DPI/scaling support:
-        - No fixed width/height - content determines size
-        - Works correctly on 125%, 150%, 200% scaling
-        - Maintains button visibility even with larger fonts
+        - Minimum size 380x260 ensures buttons visible
+        - Content can grow beyond minimum on high DPI (125-200%)
+        - Create button disabled until fields filled
+        - Works correctly on all Windows scaling settings
         """
         from tkinter import filedialog
         import subprocess
@@ -2764,7 +2777,7 @@ class AgentDashboard:
         # Set title bar color
         dialog.after(50, lambda: set_title_bar_color(dialog, self.is_dark))
 
-        # Main frame - no fixed size, auto-adjusts to content
+        # Main frame - auto-adjusts to content
         frame = tk.Frame(dialog, bg=t["card_bg"], padx=20, pady=16)
         frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
@@ -2837,9 +2850,9 @@ class AgentDashboard:
         )
         hint_label.pack(fill=tk.X, pady=(8, 0))
 
-        # Buttons
+        # Buttons - packed at bottom (sticky)
         btn_frame = tk.Frame(frame, bg=t["card_bg"])
-        btn_frame.pack(fill=tk.X, pady=(16, 0))
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(16, 0))
 
         def on_create():
             purpose = purpose_var.get().strip()
@@ -2877,17 +2890,31 @@ class AgentDashboard:
         )
         create_btn.pack(side=tk.RIGHT)
 
+        # Validation: Create enabled only if both fields filled
+        def validate_fields(*args):
+            is_valid = bool(purpose_var.get().strip() and path_var.get().strip())
+            create_btn.configure(state="normal" if is_valid else "disabled")
+
+        purpose_var.trace_add("write", validate_fields)
+        path_var.trace_add("write", validate_fields)
+        validate_fields()  # Initial state
+
         # Enter key to create
         dialog.bind("<Return>", lambda e: on_create())
         dialog.bind("<Escape>", lambda e: dialog.destroy())
 
         # Auto-size and center after all widgets are packed
+        # Minimum 380x260 ensures Create/Cancel visible even on standard DPI
+        # Content can grow beyond minimum on high DPI (125-200%)
         dialog.update_idletasks()
-        dialog_w = dialog.winfo_reqwidth()
-        dialog_h = dialog.winfo_reqheight()
-        x = self.root.winfo_x() + (self.root.winfo_width() - dialog_w) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - dialog_h) // 2
-        dialog.geometry(f"+{x}+{y}")
+        req_w = dialog.winfo_reqwidth()
+        req_h = dialog.winfo_reqheight()
+        w = max(380, req_w)
+        h = max(260, req_h)
+        x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+        dialog.minsize(w, h)
 
     def _show_settings(self, agent_data: Dict):
         callbacks = {
