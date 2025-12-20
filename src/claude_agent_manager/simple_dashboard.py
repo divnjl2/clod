@@ -2701,7 +2701,13 @@ class AgentDashboard:
                 break
 
     def _create_agent(self):
-        """Show themed dialog to create new agent."""
+        """Show themed dialog to create new agent.
+
+        Auto-sizing enabled for DPI/scaling support:
+        - No fixed width/height - content determines size
+        - Works correctly on 125%, 150%, 200% scaling
+        - Maintains button visibility even with larger fonts
+        """
         from tkinter import filedialog
         import subprocess
 
@@ -2713,17 +2719,10 @@ class AgentDashboard:
         dialog.transient(self.root)
         dialog.grab_set()
 
-        # Center on parent
-        dialog.update_idletasks()
-        w, h = 340, 200
-        x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
-        dialog.geometry(f"{w}x{h}+{x}+{y}")
-
         # Set title bar color
         dialog.after(50, lambda: set_title_bar_color(dialog, self.is_dark))
 
-        # Main frame
+        # Main frame - no fixed size, auto-adjusts to content
         frame = tk.Frame(dialog, bg=t["card_bg"], padx=20, pady=16)
         frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
@@ -2747,7 +2746,8 @@ class AgentDashboard:
             font=("Segoe UI", 10),
             bg=t["btn_bg"], fg=t["fg"],
             insertbackground=t["fg"],
-            relief="flat", bd=0
+            relief="flat", bd=0,
+            width=35  # Minimum width in characters
         )
         purpose_entry.pack(fill=tk.X, ipady=6)
         purpose_entry.focus_set()
@@ -2785,6 +2785,15 @@ class AgentDashboard:
         )
         browse_btn.pack(side=tk.RIGHT, ipady=5)
         browse_btn.bind("<Button-1>", lambda e: browse())
+
+        # Hint label - helps user understand what to fill
+        hint_label = tk.Label(
+            frame, text="Fill Purpose and Project Directory",
+            font=("Segoe UI", 8),
+            bg=t["card_bg"], fg=t["fg_dim"],
+            anchor="w"
+        )
+        hint_label.pack(fill=tk.X, pady=(8, 0))
 
         # Buttons
         btn_frame = tk.Frame(frame, bg=t["card_bg"])
@@ -2829,6 +2838,14 @@ class AgentDashboard:
         # Enter key to create
         dialog.bind("<Return>", lambda e: on_create())
         dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+        # Auto-size and center after all widgets are packed
+        dialog.update_idletasks()
+        dialog_w = dialog.winfo_reqwidth()
+        dialog_h = dialog.winfo_reqheight()
+        x = self.root.winfo_x() + (self.root.winfo_width() - dialog_w) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - dialog_h) // 2
+        dialog.geometry(f"+{x}+{y}")
 
     def _show_settings(self, agent_data: Dict):
         callbacks = {
