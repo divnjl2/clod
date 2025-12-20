@@ -2433,7 +2433,7 @@ class AgentDashboard:
         ).pack(pady=(0, 16))
 
         # ═══════════════════════════════════════════════════════════════════════
-        # QUICK START - Preset buttons
+        # QUICK START - Preset buttons (responsive grid)
         # ═══════════════════════════════════════════════════════════════════════
         presets_frame = tk.Frame(form_frame, bg=t["card_bg"])
         presets_frame.pack(fill=tk.X, pady=(0, 16))
@@ -2493,39 +2493,81 @@ class AgentDashboard:
                     import traceback
                     traceback.print_exc()
 
-        for i, (icon, preset_id, label, desc) in enumerate(quick_presets):
-            btn_frame = tk.Frame(presets_grid, bg=t["btn_bg"], cursor="hand2")
-            btn_frame.grid(row=i // 3, column=i % 3, padx=2, pady=2, sticky="nsew")
+        # Cache to prevent infinite rebuild loop
+        self._welcome_last_cols = None
+        self._welcome_preset_buttons = []
 
-            # Icon + label
-            tk.Label(
-                btn_frame, text=f"{icon} {label}",
-                font=("Segoe UI", 9, "bold"),
-                bg=t["btn_bg"], fg=t["fg"],
-                padx=8, pady=4
-            ).pack(anchor="w")
+        def rebuild_preset_grid():
+            """Rebuild preset grid with responsive columns.
 
-            # Description
-            tk.Label(
-                btn_frame, text=desc,
-                font=("Segoe UI", 7),
-                bg=t["btn_bg"], fg=t["fg_dim"],
-                padx=8
-            ).pack(anchor="w", pady=(0, 4))
+            Called on window resize. Uses cache to prevent infinite loops:
+            - Only rebuilds if column count changed
+            - Stores last_cols to detect actual changes
+            """
+            # Calculate columns based on window width
+            width = canvas.winfo_width() if canvas.winfo_width() > 1 else 600
+            if width < 400:
+                cols = 1
+            elif width < 650:
+                cols = 2
+            else:
+                cols = 3
 
-            # Bind click to frame and all children
-            def bind_click(widget, pid=preset_id):
-                widget.bind("<Button-1>", lambda e: create_from_preset(pid))
-                widget.bind("<Enter>", lambda e, w=widget.master: w.configure(bg=t["btn_hover"]) or [c.configure(bg=t["btn_hover"]) for c in w.winfo_children()])
-                widget.bind("<Leave>", lambda e, w=widget.master: w.configure(bg=t["btn_bg"]) or [c.configure(bg=t["btn_bg"]) for c in w.winfo_children()])
+            # Only rebuild if columns changed (prevent infinite loop)
+            if cols == self._welcome_last_cols:
+                return
 
-            bind_click(btn_frame, preset_id)
-            for child in btn_frame.winfo_children():
-                bind_click(child, preset_id)
+            self._welcome_last_cols = cols
 
-        # Configure grid columns
-        for c in range(3):
-            presets_grid.columnconfigure(c, weight=1)
+            # Clear existing buttons
+            for btn in self._welcome_preset_buttons:
+                btn.destroy()
+            self._welcome_preset_buttons.clear()
+
+            # Create buttons
+            for i, (icon, preset_id, label, desc) in enumerate(quick_presets):
+                btn_frame = tk.Frame(presets_grid, bg=t["btn_bg"], cursor="hand2")
+                btn_frame.grid(row=i // cols, column=i % cols, padx=2, pady=2, sticky="nsew")
+                self._welcome_preset_buttons.append(btn_frame)
+
+                # Icon + label
+                tk.Label(
+                    btn_frame, text=f"{icon} {label}",
+                    font=("Segoe UI", 9, "bold"),
+                    bg=t["btn_bg"], fg=t["fg"],
+                    padx=8, pady=4
+                ).pack(anchor="w")
+
+                # Description
+                tk.Label(
+                    btn_frame, text=desc,
+                    font=("Segoe UI", 7),
+                    bg=t["btn_bg"], fg=t["fg_dim"],
+                    padx=8
+                ).pack(anchor="w", pady=(0, 4))
+
+                # Bind click to frame and all children
+                def bind_click(widget, pid=preset_id):
+                    widget.bind("<Button-1>", lambda e: create_from_preset(pid))
+                    widget.bind("<Enter>", lambda e, w=widget.master: w.configure(bg=t["btn_hover"]) or [c.configure(bg=t["btn_hover"]) for c in w.winfo_children()])
+                    widget.bind("<Leave>", lambda e, w=widget.master: w.configure(bg=t["btn_bg"]) or [c.configure(bg=t["btn_bg"]) for c in w.winfo_children()])
+
+                bind_click(btn_frame, preset_id)
+                for child in btn_frame.winfo_children():
+                    bind_click(child, preset_id)
+
+            # Configure grid columns with equal weight
+            for c in range(cols):
+                presets_grid.columnconfigure(c, weight=1)
+
+        # Initial build
+        rebuild_preset_grid()
+
+        # Rebuild on window resize (responsive)
+        def on_canvas_resize(e):
+            rebuild_preset_grid()
+
+        canvas.bind("<Configure>", on_canvas_resize, add="+")
 
         # Separator
         tk.Frame(form_frame, bg=t["separator"], height=1).pack(fill=tk.X, pady=(8, 16))
