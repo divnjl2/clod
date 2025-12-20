@@ -2532,10 +2532,9 @@ class AgentDashboard:
         self._welcome_preset_buttons = []
 
         def rebuild_preset_grid():
-            """Rebuild preset grid - single column for full text visibility."""
-            # Single column - ensures all text is visible
-            cols = 1
-            wrap = 300
+            """Rebuild preset grid - 3 columns layout."""
+            cols = 3
+            wrap = 120
 
             # Only rebuild if columns changed (prevent infinite loop)
             if cols == self._welcome_last_cols:
@@ -2560,23 +2559,18 @@ class AgentDashboard:
                 btn_frame.grid(row=i // cols, column=i % cols, padx=4, pady=4, sticky="nsew")
                 self._welcome_preset_buttons.append(btn_frame)
 
-                # Icon + label
+                # Compact card: icon + label centered
                 tk.Label(
-                    btn_frame, text=f"{icon} {label}",
-                    font=("Segoe UI", 10, "bold"),
-                    bg=t["btn_bg"], fg=t["fg"],
-                    padx=8, pady=6
-                ).pack(anchor="w")
+                    btn_frame, text=icon,
+                    font=("Segoe UI", 14),
+                    bg=t["btn_bg"], fg=t["accent"]
+                ).pack(pady=(4, 2))
 
-                # Description - with wraplength to prevent stretching grid
                 tk.Label(
-                    btn_frame, text=desc,
+                    btn_frame, text=label,
                     font=("Segoe UI", 8),
-                    bg=t["btn_bg"], fg=t["fg_dim"],
-                    padx=8,
-                    wraplength=180,
-                    justify="left"
-                ).pack(anchor="w", pady=(0, 6))
+                    bg=t["btn_bg"], fg=t["fg"]
+                ).pack(pady=(0, 4))
 
                 # Bind click and hover to card
                 def bind_to_card(widget, card, pid):
