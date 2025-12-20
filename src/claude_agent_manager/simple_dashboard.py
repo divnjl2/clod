@@ -2437,9 +2437,7 @@ class AgentDashboard:
 
             if HAS_BACKEND:
                 try:
-                    from .sharing import get_builtin_preset, apply_preset
-                    from .registry import save_agent
-                    from .worker import pick_port
+                    from .sharing import get_builtin_preset
                     import uuid
 
                     preset = get_builtin_preset(preset_name)
@@ -2447,26 +2445,21 @@ class AgentDashboard:
                         print(f"Preset not found: {preset_name}")
                         return
 
-                    cfg = load_config()
-                    agent_root = Path(cfg.agent_root)
-                    agent_root.mkdir(parents=True, exist_ok=True)
-
-                    # Generate ID and port
+                    # Generate ID
                     agent_id = f"{preset_name}-{uuid.uuid4().hex[:6]}"
-                    used_ports = set()
-                    port = pick_port(cfg, used_ports)
 
-                    # Create agent from preset
-                    agent = apply_preset(
-                        preset=preset,
-                        agent_id=agent_id,
+                    # Use manager.create_agent with preset config
+                    # This properly creates CLAUDE.md, .mcp.json, etc.
+                    manager.create_agent(
+                        purpose=preset.purpose_template or preset.metadata.name,
                         project_path=project,
-                        port=port,
+                        agent_id=agent_id,
+                        use_browser=False,
+                        config=preset.config,  # This includes system_prompt, mcp_servers
                     )
-                    save_agent(agent_root, agent)
 
-                    print(f"Created agent: {agent_id}")
-                    self.root.after(1500, self._load_agents)
+                    print(f"✓ Created {preset.metadata.name} agent: {agent_id}")
+                    self.root.after(500, self._load_agents)
                 except Exception as e:
                     print(f"Create from preset error: {e}")
                     import traceback
