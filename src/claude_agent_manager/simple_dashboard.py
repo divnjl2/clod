@@ -2367,7 +2367,13 @@ class AgentDashboard:
         return []
 
     def _render_welcome_form(self):
-        """Render inline welcome form for first agent creation."""
+        """Render inline welcome form for first agent creation.
+
+        Uses Setup Layout A (2 columns):
+        - Left: Quick Start presets
+        - Right: Custom Create form
+        - Responsive: <720px switches to 1 column
+        """
         from tkinter import filedialog
         t = self.theme
 
@@ -2430,23 +2436,19 @@ class AgentDashboard:
             top, text="Choose a preset or create custom agent",
             font=("Segoe UI", 9),
             bg=t["card_bg"], fg=t["fg_dim"]
-        ).pack(pady=(0, 8))
+        ).pack(pady=(0, 12))
 
         # ═══════════════════════════════════════════════════════════════════════
-        # QUICK START - Preset buttons (responsive grid)
+        # SETUP LAYOUT A: Two-column layout (responsive)
         # ═══════════════════════════════════════════════════════════════════════
-        presets_frame = tk.Frame(form_frame, bg=t["card_bg"])
-        presets_frame.pack(fill=tk.X, pady=(0, 16))
 
-        tk.Label(
-            presets_frame, text="⚡ QUICK START",
-            font=("Segoe UI", 9, "bold"),
-            bg=t["card_bg"], fg=t["accent"]
-        ).pack(anchor="w", pady=(0, 8))
+        # Setup container (grid for 2 columns)
+        setup_container = tk.Frame(form_frame, bg=t["card_bg"])
+        setup_container.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 12))
 
-        # Preset buttons grid
-        presets_grid = tk.Frame(presets_frame, bg=t["card_bg"])
-        presets_grid.pack(fill=tk.X)
+        # Left and right columns
+        left_col = tk.Frame(setup_container, bg=t["card_bg"])
+        right_col = tk.Frame(setup_container, bg=t["card_bg"])
 
         # Define presets with icons
         quick_presets = [
@@ -2477,13 +2479,12 @@ class AgentDashboard:
                     agent_id = f"{preset_name}-{uuid.uuid4().hex[:6]}"
 
                     # Use manager.create_agent with preset config
-                    # This properly creates CLAUDE.md, .mcp.json, etc.
                     manager.create_agent(
                         purpose=preset.purpose_template or preset.metadata.name,
                         project_path=project,
                         agent_id=agent_id,
                         use_browser=False,
-                        config=preset.config,  # This includes system_prompt, mcp_servers
+                        config=preset.config,
                     )
 
                     print(f"Created {preset.metadata.name} agent: {agent_id}")
@@ -2493,6 +2494,22 @@ class AgentDashboard:
                     import traceback
                     traceback.print_exc()
 
+        # ─────────────────────────────────────────────────────────────────────
+        # LEFT COLUMN: Quick Start presets
+        # ─────────────────────────────────────────────────────────────────────
+        qs_card = tk.Frame(left_col, bg=t["card_bg"])
+        qs_card.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(
+            qs_card, text="⚡ QUICK START",
+            font=("Segoe UI", 10, "bold"),
+            bg=t["card_bg"], fg=t["accent"]
+        ).pack(anchor="w", pady=(0, 8))
+
+        # Preset buttons grid
+        presets_grid = tk.Frame(qs_card, bg=t["card_bg"])
+        presets_grid.pack(fill=tk.BOTH, expand=True)
+
         # Cache to prevent infinite rebuild loop
         self._welcome_last_cols = None
         self._welcome_preset_buttons = []
@@ -2500,22 +2517,19 @@ class AgentDashboard:
         def rebuild_preset_grid():
             """Rebuild preset grid with responsive columns.
 
-            Called on window resize. Uses cache to prevent infinite loops:
-            - Only rebuilds if column count changed
-            - Stores last_cols to detect actual changes
-            - Breakpoints: <380px (1 col), <520px (2 cols), >=520px (3 cols)
+            In Layout A: Quick Start adapts to left column width.
+            - <360px: 1 col
+            - <520px: 2 cols
+            - >=520px: 2 cols (stable)
             """
-            # Calculate columns based on window width
-            width = canvas.winfo_width() if canvas.winfo_width() > 1 else 600
-            if width < 380:
+            # Get left_col width
+            width = left_col.winfo_width() if left_col.winfo_width() > 1 else 300
+            if width < 360:
                 cols = 1
-                wrap = 260  # wraplength for description
-            elif width < 520:
-                cols = 2
-                wrap = 160
+                wrap = 240
             else:
-                cols = 3
-                wrap = 120
+                cols = 2
+                wrap = 140
 
             # Only rebuild if columns changed (prevent infinite loop)
             if cols == self._welcome_last_cols:
@@ -2537,7 +2551,7 @@ class AgentDashboard:
             # Create buttons
             for i, (icon, preset_id, label, desc) in enumerate(quick_presets):
                 btn_frame = tk.Frame(presets_grid, bg=t["btn_bg"], cursor="hand2")
-                btn_frame.grid(row=i // cols, column=i % cols, padx=2, pady=2, sticky="nsew")
+                btn_frame.grid(row=i // cols, column=i % cols, padx=4, pady=4, sticky="nsew")
                 self._welcome_preset_buttons.append(btn_frame)
 
                 # Icon + label
@@ -2545,7 +2559,7 @@ class AgentDashboard:
                     btn_frame, text=f"{icon} {label}",
                     font=("Segoe UI", 9, "bold"),
                     bg=t["btn_bg"], fg=t["fg"],
-                    padx=8, pady=4
+                    padx=8, pady=6
                 ).pack(anchor="w")
 
                 # Description - with wraplength to prevent stretching grid
@@ -2556,9 +2570,9 @@ class AgentDashboard:
                     padx=8,
                     wraplength=wrap,
                     justify="left"
-                ).pack(anchor="w", pady=(0, 4))
+                ).pack(anchor="w", pady=(0, 6))
 
-                # Bind click and hover to card (not widget.master!)
+                # Bind click and hover to card
                 def bind_to_card(widget, card, pid):
                     widget.bind("<Button-1>", lambda e: create_from_preset(pid))
                     widget.bind("<Enter>", lambda e: set_card_bg(card, t["btn_hover"]))
@@ -2575,51 +2589,49 @@ class AgentDashboard:
         # Initial build
         rebuild_preset_grid()
 
-        # Rebuild on window resize (responsive)
-        def on_canvas_resize(e):
+        # Rebuild on left_col resize
+        def on_left_resize(e):
             rebuild_preset_grid()
 
-        canvas.bind("<Configure>", on_canvas_resize, add="+")
+        left_col.bind("<Configure>", on_left_resize, add="+")
 
-        # Separator
-        tk.Frame(form_frame, bg=t["separator"], height=1).pack(fill=tk.X, pady=(8, 16))
+        # ─────────────────────────────────────────────────────────────────────
+        # RIGHT COLUMN: Custom Create form
+        # ─────────────────────────────────────────────────────────────────────
+        custom_card = tk.Frame(right_col, bg=t["card_bg"])
+        custom_card.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(
-            form_frame, text="OR CREATE CUSTOM",
-            font=("Segoe UI", 8),
-            bg=t["card_bg"], fg=t["fg_dim"]
-        ).pack(pady=(0, 8))
-
-        # Form fields
-        fields_frame = tk.Frame(form_frame, bg=t["card_bg"])
-        fields_frame.pack(fill=tk.X)
+            custom_card, text="🔧 CREATE CUSTOM",
+            font=("Segoe UI", 10, "bold"),
+            bg=t["card_bg"], fg=t["accent"]
+        ).pack(anchor="w", pady=(0, 12))
 
         # Purpose
         tk.Label(
-            fields_frame, text="Purpose",
+            custom_card, text="Purpose",
             font=("Segoe UI", 9),
             bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
-        ).pack(fill=tk.X, pady=(0, 2))
+        ).pack(fill=tk.X, pady=(0, 4))
 
         self._welcome_purpose = tk.StringVar()
         purpose_entry = tk.Entry(
-            fields_frame, textvariable=self._welcome_purpose,
+            custom_card, textvariable=self._welcome_purpose,
             font=("Segoe UI", 10),
             bg=t["btn_bg"], fg=t["fg"],
             insertbackground=t["fg"],
             relief="flat", bd=0
         )
         purpose_entry.pack(fill=tk.X, ipady=8)
-        purpose_entry.focus_set()
 
         # Project path
         tk.Label(
-            fields_frame, text="Project Directory",
+            custom_card, text="Project Directory",
             font=("Segoe UI", 9),
             bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
-        ).pack(fill=tk.X, pady=(12, 2))
+        ).pack(fill=tk.X, pady=(12, 4))
 
-        path_frame = tk.Frame(fields_frame, bg=t["card_bg"])
+        path_frame = tk.Frame(custom_card, bg=t["card_bg"])
         path_frame.pack(fill=tk.X)
 
         self._welcome_path = tk.StringVar()
@@ -2648,9 +2660,17 @@ class AgentDashboard:
         browse_btn.bind("<Enter>", lambda e: browse_btn.configure(bg=t["btn_hover"]))
         browse_btn.bind("<Leave>", lambda e: browse_btn.configure(bg=t["btn_bg"]))
 
+        # Hint/Error label
+        hint_label = tk.Label(
+            custom_card, text="Fill both fields to enable Create",
+            font=("Segoe UI", 8),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        )
+        hint_label.pack(fill=tk.X, pady=(8, 0))
+
         # Create button
-        btn_frame = tk.Frame(form_frame, bg=t["card_bg"])
-        btn_frame.pack(fill=tk.X, pady=(20, 0))
+        btn_container = tk.Frame(custom_card, bg=t["card_bg"])
+        btn_container.pack(fill=tk.X, pady=(16, 0))
 
         def on_create():
             purpose = self._welcome_purpose.get().strip()
@@ -2660,7 +2680,6 @@ class AgentDashboard:
 
             if HAS_BACKEND:
                 try:
-                    # Create without browser by default (can open later via settings)
                     manager.create_agent(
                         purpose=purpose,
                         project_path=project,
@@ -2668,22 +2687,82 @@ class AgentDashboard:
                     )
                 except Exception as e:
                     print(f"Create agent error: {e}")
+                    hint_label.configure(text=f"Error: {e}", fg=t["error"] if "error" in t else t["fg"])
                     return
 
-            # Delay refresh to let pm2 start (2.5s should be enough)
+            # Delay refresh to let pm2 start
             self.root.after(2500, self._load_agents)
 
         create_btn = AnimatedButton(
-            btn_frame, text="Create Agent",
+            btn_container, text="Create Agent",
             command=on_create,
             theme=t, style="primary",
             font_size=10, padx=24, pady=8
         )
         create_btn.pack()
 
+        # Validation: Create enabled only if both fields filled
+        def validate_fields(*args):
+            is_valid = bool(self._welcome_purpose.get().strip() and self._welcome_path.get().strip())
+            create_btn.configure(state="normal" if is_valid else "disabled")
+            if is_valid:
+                hint_label.configure(text="Ready to create!", fg=t["accent"])
+            else:
+                hint_label.configure(text="Fill both fields to enable Create", fg=t["fg_dim"])
+
+        self._welcome_purpose.trace_add("write", validate_fields)
+        self._welcome_path.trace_add("write", validate_fields)
+        validate_fields()  # Initial state
+
         # Bind Enter key
-        purpose_entry.bind("<Return>", lambda e: path_entry.focus_set())
-        path_entry.bind("<Return>", lambda e: on_create())
+        purpose_entry.bind("<Return>", lambda e: browse())
+        path_entry.bind("<Return>", lambda e: on_create() if create_btn["state"] != "disabled" else None)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # RESPONSIVE LAYOUT: 2 columns <-> 1 column
+        # ─────────────────────────────────────────────────────────────────────
+        RESPONSIVE_BREAKPOINT = 720
+        self._welcome_last_layout = None
+
+        def update_layout():
+            """Switch between 2-column and 1-column layout based on width."""
+            width = canvas.winfo_width() if canvas.winfo_width() > 1 else 800
+
+            if width >= RESPONSIVE_BREAKPOINT:
+                layout = "two_col"
+            else:
+                layout = "one_col"
+
+            # Only update if layout changed
+            if layout == self._welcome_last_layout:
+                return
+
+            self._welcome_last_layout = layout
+
+            if layout == "two_col":
+                # 2 columns side by side
+                left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+                right_col.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+                setup_container.columnconfigure(0, weight=1)
+                setup_container.columnconfigure(1, weight=1)
+                setup_container.rowconfigure(0, weight=1)
+            else:
+                # 1 column (stacked)
+                left_col.grid(row=0, column=0, sticky="nsew", padx=0)
+                right_col.grid(row=1, column=0, sticky="nsew", padx=0, pady=(12, 0))
+                setup_container.columnconfigure(0, weight=1)
+                setup_container.columnconfigure(1, weight=0)
+                setup_container.rowconfigure(0, weight=0)
+                setup_container.rowconfigure(1, weight=0)
+
+        # Initial layout
+        update_layout()
+
+        # Update on canvas resize
+        def on_canvas_resize_layout(e):
+            update_layout()
+
+        canvas.bind("<Configure>", on_canvas_resize_layout, add="+")
 
         # Data path hint at bottom
         tk.Label(
@@ -2691,7 +2770,7 @@ class AgentDashboard:
             text=f"Data: {get_app_data_dir()}",
             font=("Consolas", 7),
             bg=t["card_bg"], fg=t["fg_dim"]
-        ).pack(side=tk.BOTTOM, pady=(16, 0))
+        ).pack(side=tk.BOTTOM, pady=(12, 0))
 
     def _render(self):
         t = self.theme
