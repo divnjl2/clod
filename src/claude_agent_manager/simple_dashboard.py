@@ -1570,15 +1570,6 @@ class AgentCard(tk.Frame):
         # Name/Purpose - главный элемент (с иконкой редактирования)
         name = agent.get("display_name") or agent["purpose"]
         name_truncated = name[:18] + "…" if len(name) > 18 else name
-        # Port - fixed position справа
-        self.port_lbl = tk.Label(
-            self.top,
-            text=f":{agent['port']}",
-            font=("Consolas", 8),
-            bg=t["card_bg"],
-            fg=t["accent"]
-        )
-        self.port_lbl.pack(side=tk.RIGHT, padx=(4, 0))
 
         self.purpose_lbl = tk.Label(
             self.top,
@@ -1629,7 +1620,7 @@ class AgentCard(tk.Frame):
             )
             self.autopilot_badge.pack(side=tk.LEFT, padx=(4, 0))
 
-        # Toggle button
+        # Right side: Port + Toggle button (same level)
         btn_style = "stop" if status == "online" else "start"
         btn_text = "Stop" if status == "online" else "Start"
 
@@ -1645,6 +1636,16 @@ class AgentCard(tk.Frame):
             bg=t["card_bg"]  # Match parent bg to hide corners
         )
         self.toggle_btn.pack(side=tk.RIGHT, padx=(6, 0))
+
+        # Port label - next to button
+        self.port_lbl = tk.Label(
+            self.content,
+            text=f":{agent['port']}",
+            font=("Consolas", 8),
+            bg=t["card_bg"],
+            fg=t["accent"]
+        )
+        self.port_lbl.pack(side=tk.RIGHT, padx=(4, 0))
 
         self._widgets = [self.content, self.left, self.top, self.purpose_lbl, self.port_lbl, self.info_frame, self.id_lbl, self.mem_lbl]
         if self.autopilot_badge:
@@ -2745,23 +2746,20 @@ class AgentDashboard:
         # Dashboard mode - restore card chrome, compact window
         if not hasattr(self, '_ui_mode') or self._ui_mode != 'dashboard':
             self._ui_mode = 'dashboard'
-            self.root.minsize(500, 400)
+            self.root.minsize(460, 400)
 
             # Restore card chrome (header, separator, footer)
             self.header.pack(fill=tk.X, pady=(0, 8), before=self.agents_frame)
             self.sep.pack(fill=tk.X, pady=(0, 8), before=self.agents_frame)
             self.footer.pack(fill=tk.X, pady=(4, 0), after=self.agents_frame)
 
-            # Restore card fixed width layout
+            # Restore card - fill entire window (no empty space)
             self.card.pack_forget()
-            self.card.configure(width=440)
-            self.card.pack(side=tk.LEFT, fill=tk.Y, expand=False)
+            self.card.configure(width=0)  # Remove fixed width
+            self.card.pack(fill=tk.BOTH, expand=True)
 
-            # Shrink window if it's currently too large
-            current_w = self.root.winfo_width()
-            current_h = self.root.winfo_height()
-            if current_w > 750 or current_h > 550:
-                self.root.geometry("650x500")
+            # Compact window for dashboard
+            self.root.geometry("460x420")
 
         # Render cards
         cols = 2 if count > 1 else 1
@@ -2992,14 +2990,20 @@ class AgentDashboard:
         cur_h = self.root.winfo_height()
         self._base_width = cur_w  # Remember original width
 
+        # Make card fixed width when panel opens
+        self.card.pack_forget()
+        self.card.configure(width=420)
+        self.card.pack(side=tk.LEFT, fill=tk.Y, expand=False)
+
         # Expand window to the right
-        self.root.geometry(f"{cur_w + panel_width}x{cur_h}")
+        new_width = 420 + panel_width + 30  # card + panel + padding
+        self.root.geometry(f"{new_width}x{cur_h}")
         self.root.update_idletasks()
 
-        # Place panel in the new space (right of fixed card)
+        # Pack settings panel on the right
         main_h = self.main.winfo_height()
         self.settings_panel.place(
-            x=450, y=0,  # Right after card (440 + padding)
+            x=430, y=0,  # Right after card
             width=panel_width - 10, height=main_h
         )
 
@@ -3008,8 +3012,15 @@ class AgentDashboard:
             return
         self.settings_visible = False
 
-        # Hide panel and restore original width
+        # Hide panel
         self.settings_panel.place_forget()
+
+        # Restore card to fill entire window
+        self.card.pack_forget()
+        self.card.configure(width=0)
+        self.card.pack(fill=tk.BOTH, expand=True)
+
+        # Restore compact window size
         cur_h = self.root.winfo_height()
         self.root.geometry(f"{self._base_width}x{cur_h}")
 
