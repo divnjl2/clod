@@ -1570,25 +1570,26 @@ class AgentCard(tk.Frame):
         # Name/Purpose - главный элемент (с иконкой редактирования)
         name = agent.get("display_name") or agent["purpose"]
         name_truncated = name[:18] + "…" if len(name) > 18 else name
-        self.purpose_lbl = tk.Label(
-            self.top, 
-            text=f"{name_truncated} ✎", 
-            font=("Segoe UI Semibold", 9), 
-            bg=t["card_bg"], 
-            fg=t["fg"], 
-            cursor="hand2"
-        )
-        self.purpose_lbl.pack(side=tk.LEFT)
-
-        # Port - справа в той же строке
+        # Port - fixed position справа
         self.port_lbl = tk.Label(
-            self.top, 
-            text=f":{agent['port']}", 
-            font=("Consolas", 8), 
-            bg=t["card_bg"], 
+            self.top,
+            text=f":{agent['port']}",
+            font=("Consolas", 8),
+            bg=t["card_bg"],
             fg=t["accent"]
         )
         self.port_lbl.pack(side=tk.RIGHT, padx=(4, 0))
+
+        self.purpose_lbl = tk.Label(
+            self.top,
+            text=f"{name_truncated} ✎",
+            font=("Segoe UI Semibold", 9),
+            bg=t["card_bg"],
+            fg=t["fg"],
+            cursor="hand2",
+            anchor="w"
+        )
+        self.purpose_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Bottom row: ID + Memory indicator
         self.info_frame = tk.Frame(self.left, bg=t["card_bg"])
@@ -2370,9 +2371,36 @@ class AgentDashboard:
         from tkinter import filedialog
         t = self.theme
 
+        # Scroll container
+        canvas = tk.Canvas(self.agents_frame, bg=t["card_bg"], highlightthickness=0)
+        scrollbar = tk.Scrollbar(self.agents_frame, orient="vertical", command=canvas.yview)
+
         # Main container with scroll
-        form_frame = tk.Frame(self.agents_frame, bg=t["card_bg"])
-        form_frame.pack(expand=True, fill=tk.BOTH, padx=20, pady=20)
+        form_frame = tk.Frame(canvas, bg=t["card_bg"])
+
+        # Configure canvas
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas_window = canvas.create_window((0, 0), window=form_frame, anchor="nw")
+
+        def on_configure(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            # Center horizontally
+            canvas_width = canvas.winfo_width()
+            frame_width = form_frame.winfo_reqwidth()
+            if frame_width < canvas_width:
+                canvas.coords(canvas_window, (canvas_width - frame_width) // 2, 0)
+
+        form_frame.bind("<Configure>", on_configure)
+        canvas.bind("<Configure>", lambda e: on_configure(e))
+
+        # Pack
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(20, 0), pady=20)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 20), pady=20)
+
+        # Mouse wheel scroll
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
 
         # Top section with logo
         top = tk.Frame(form_frame, bg=t["card_bg"])
@@ -2458,7 +2486,7 @@ class AgentDashboard:
                         config=preset.config,  # This includes system_prompt, mcp_servers
                     )
 
-                    print(f"✓ Created {preset.metadata.name} agent: {agent_id}")
+                    print(f"Created {preset.metadata.name} agent: {agent_id}")
                     self.root.after(500, self._load_agents)
                 except Exception as e:
                     print(f"Create from preset error: {e}")
