@@ -2410,31 +2410,32 @@ class AgentDashboard:
         top = tk.Frame(form_frame, bg=t["card_bg"])
         top.pack(fill=tk.X)
 
-        # Welcome icon - use app logo (compact 48px for less vertical space)
+        # Welcome icon - 3x larger with white background
         icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
         if icon_path.exists():
             try:
                 self._welcome_icon = tk.PhotoImage(file=str(icon_path))
-                factor = max(1, self._welcome_icon.width() // 48)
+                factor = max(1, self._welcome_icon.width() // 144)  # 3x larger (was 48)
                 self._welcome_icon = self._welcome_icon.subsample(factor, factor)
                 tk.Label(
                     top, image=self._welcome_icon,
-                    bg=t["card_bg"], borderwidth=0
-                ).pack(pady=(0, 6))
+                    bg="white", borderwidth=0,  # White background
+                    padx=8, pady=8
+                ).pack(pady=(0, 12))
             except:
                 pass
 
         tk.Label(
             top, text="Create your first agent",
-            font=("Segoe UI Semibold", 12),
+            font=("Segoe UI Semibold", 24),  # 2x larger (was 12)
             bg=t["card_bg"], fg=t["fg"]
-        ).pack(pady=(0, 4))
+        ).pack(pady=(0, 8))
 
         tk.Label(
             top, text="Choose a preset or create custom agent",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 18),  # 2x larger (was 9)
             bg=t["card_bg"], fg=t["fg_dim"]
-        ).pack(pady=(0, 12))
+        ).pack(pady=(0, 16))
 
         # ═══════════════════════════════════════════════════════════════════════
         # SETUP LAYOUT A: Two-column layout (responsive)
@@ -2500,9 +2501,9 @@ class AgentDashboard:
 
         tk.Label(
             qs_card, text="⚡ QUICK START",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 20, "bold"),  # 2x larger (was 10)
             bg=t["card_bg"], fg=t["accent"]
-        ).pack(anchor="w", pady=(0, 8))
+        ).pack(anchor="w", pady=(0, 12))
 
         # Preset buttons grid
         presets_grid = tk.Frame(qs_card, bg=t["card_bg"])
@@ -2555,20 +2556,20 @@ class AgentDashboard:
                 # Icon + label
                 tk.Label(
                     btn_frame, text=f"{icon} {label}",
-                    font=("Segoe UI", 9, "bold"),
+                    font=("Segoe UI", 18, "bold"),  # 2x larger (was 9)
                     bg=t["btn_bg"], fg=t["fg"],
-                    padx=8, pady=6
+                    padx=16, pady=12  # 2x larger padding
                 ).pack(anchor="w")
 
                 # Description - with wraplength to prevent stretching grid
                 tk.Label(
                     btn_frame, text=desc,
-                    font=("Segoe UI", 7),
+                    font=("Segoe UI", 14),  # 2x larger (was 7)
                     bg=t["btn_bg"], fg=t["fg_dim"],
-                    padx=8,
-                    wraplength=wrap,
+                    padx=16,  # 2x larger
+                    wraplength=wrap * 2,  # 2x wider
                     justify="left"
-                ).pack(anchor="w", pady=(0, 6))
+                ).pack(anchor="w", pady=(0, 12))
 
                 # Bind click and hover to card
                 def bind_to_card(widget, card, pid):
@@ -2601,9 +2602,9 @@ class AgentDashboard:
 
         tk.Label(
             custom_card, text="🔧 CREATE CUSTOM",
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI", 20, "bold"),  # 2x larger (was 10)
             bg=t["card_bg"], fg=t["accent"]
-        ).pack(anchor="w", pady=(0, 12))
+        ).pack(anchor="w", pady=(0, 16))
 
         # Purpose
         tk.Label(
