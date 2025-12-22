@@ -660,3 +660,590 @@ def memory_verify() -> None:
 
     verify_isolation_live(agents, agent_root)
 
+
+# ==============================================================================
+# Git Worktrees Commands
+# ==============================================================================
+
+@app.command("worktree-create")
+def worktree_create(
+    agent_id: str = typer.Argument(..., help="ID агента"),
+    task_name: str = typer.Argument(..., help="Название задачи"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту (default: cwd)"),
+    base_branch: str = typer.Option("main", "--base", "-b", help="Базовая ветка"),
+) -> None:
+    """Создать изолированный worktree для задачи агента."""
+    from .worktree_manager import WorktreeManager
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    try:
+        wm = WorktreeManager(project)
+        worktree = wm.create_task_worktree(agent_id, task_name, base_branch)
+        console.print(f"[green]Agent {agent_id} now working in worktree: {worktree.path}[/green]")
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("worktree-list")
+def worktree_list(
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту (default: cwd)"),
+) -> None:
+    """Показать все активные worktrees."""
+    from .worktree_manager import WorktreeManager
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    try:
+        wm = WorktreeManager(project)
+        worktrees = wm.list_worktrees()
+
+        if not worktrees:
+            console.print("[yellow]No worktrees found[/yellow]")
+            return
+
+        table = Table(title="Active Worktrees")
+        table.add_column("Agent ID", style="cyan")
+        table.add_column("Task", style="green")
+        table.add_column("Branch", style="yellow")
+        table.add_column("Path", style="blue")
+        table.add_column("Status", style="magenta")
+
+        for wt in worktrees:
+            status = wm.get_worktree_status(wt)
+            status_text = f"{status['commits_ahead']} commits, {status['uncommitted_files']} files"
+
+            table.add_row(
+                wt.agent_id,
+                wt.task_name,
+                wt.branch_name,
+                str(wt.path),
+                status_text
+            )
+
+        console.print(table)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("worktree-merge")
+def worktree_merge(
+    agent_id: str = typer.Argument(..., help="ID агента"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+    target_branch: str = typer.Option("main", "--target", "-t", help="Целевая ветка"),
+    squash: bool = typer.Option(False, "--squash", "-s", help="Squash merge"),
+) -> None:
+    """Смёржить изменения из worktree агента в main."""
+    from .worktree_manager import WorktreeManager
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    try:
+        wm = WorktreeManager(project)
+        worktrees = wm.list_worktrees()
+
+        agent_worktree = None
+        for wt in worktrees:
+            if wt.agent_id == agent_id:
+                agent_worktree = wt
+                break
+
+        if not agent_worktree:
+            console.print(f"[red]No worktree found for agent {agent_id}[/red]")
+            raise typer.Exit(1)
+
+        success = wm.merge_worktree(agent_worktree, target_branch, squash=squash)
+
+        if success:
+            console.print(f"[green]Successfully merged and cleaned up worktree[/green]")
+        else:
+            console.print(f"[red]Merge failed - check conflicts[/red]")
+            raise typer.Exit(1)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("worktree-discard")
+def worktree_discard(
+    agent_id: str = typer.Argument(..., help="ID агента"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+    force: bool = typer.Option(False, "--force", "-f", help="Принудительное удаление"),
+) -> None:
+    """Удалить worktree агента без merge."""
+    from .worktree_manager import WorktreeManager
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    try:
+        wm = WorktreeManager(project)
+        worktrees = wm.list_worktrees()
+
+        for wt in worktrees:
+            if wt.agent_id == agent_id:
+                wm.discard_worktree(wt, force=force)
+                console.print(f"[green]Worktree discarded for agent {agent_id}[/green]")
+                return
+
+        console.print(f"[yellow]No worktree found for agent {agent_id}[/yellow]")
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# ==============================================================================
+# Validation Commands
+# ==============================================================================
+
+@app.command("validate")
+def validate_agent(
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту (default: cwd)"),
+    run_tests: bool = typer.Option(True, "--tests/--no-tests", help="Запускать тесты"),
+    check_types: bool = typer.Option(True, "--types/--no-types", help="Проверять типы (mypy)"),
+    check_style: bool = typer.Option(True, "--style/--no-style", help="Проверять стиль (ruff)"),
+    check_security: bool = typer.Option(True, "--security/--no-security", help="Проверять безопасность (bandit)"),
+) -> None:
+    """Валидировать код проекта (mypy, ruff, bandit, pytest)."""
+    import asyncio
+    from .validation import ValidationAgent, print_validation_report
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    # Получаем изменённые файлы через git
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=project,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        changed_files = [
+            project / line.strip()
+            for line in result.stdout.split('\n')
+            if line.strip()
+        ]
+    except:
+        # Если не git repo или нет изменений, проверяем все .py файлы
+        changed_files = list(project.rglob("*.py"))
+
+    if not changed_files:
+        console.print("[yellow]No files to validate[/yellow]")
+        return
+
+    console.print(f"[cyan]Validating {len(changed_files)} files...[/cyan]")
+
+    # Запускаем валидацию
+    validator = ValidationAgent("cli-validation", project)
+    report = asyncio.run(validator.validate_changes(
+        changed_files,
+        run_tests=run_tests,
+        check_types=check_types,
+        check_style=check_style,
+        check_security=check_security
+    ))
+
+    # Показываем результаты
+    print_validation_report(report)
+
+    # Exit code
+    if report.has_errors():
+        raise typer.Exit(1)
+
+
+# ==============================================================================
+# Context Engineering Commands
+# ==============================================================================
+
+@app.command("analyze-project")
+def analyze_project_cmd(
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту (default: cwd)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Игнорировать кеш"),
+) -> None:
+    """Анализировать проект и показать context."""
+    import asyncio
+    from .context.analyzer import CodebaseAnalyzer, print_context
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    analyzer = CodebaseAnalyzer(project)
+    context = asyncio.run(analyzer.analyze(force_refresh=force))
+
+    print_context(context)
+
+    console.print(f"\n[green]Context saved to {analyzer.cache_path}[/green]")
+
+
+# ==============================================================================
+# Task Workflow Commands (worktree + validation + context)
+# ==============================================================================
+
+@app.command("task-start")
+def task_start(
+    agent_id: str = typer.Argument(..., help="ID агента"),
+    task_name: str = typer.Argument(..., help="Название задачи"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту (default: cwd)"),
+    base_branch: str = typer.Option("main", "--base", "-b", help="Базовая ветка"),
+) -> None:
+    """
+    Начать новую задачу с полной автоматизацией.
+
+    1. Анализирует проект (context engineering)
+    2. Создаёт worktree для изоляции
+    3. Готовит окружение для агента
+    """
+    import asyncio
+    from rich.panel import Panel
+    from .worktree_manager import WorktreeManager
+    from .context.analyzer import CodebaseAnalyzer
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    # 1. Analyze project
+    console.print("[cyan]Step 1: Analyzing project...[/cyan]")
+    analyzer = CodebaseAnalyzer(project)
+    context = asyncio.run(analyzer.analyze())
+
+    # 2. Create worktree
+    console.print("[cyan]Step 2: Creating isolated worktree...[/cyan]")
+    try:
+        wm = WorktreeManager(project)
+        worktree = wm.create_task_worktree(agent_id, task_name, base_branch)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+    # 3. Summary
+    tech_stack_str = ', '.join(f'{k}: {v}' for k, v in context.tech_stack.items())
+    architecture = context.structure.get('architecture', 'unknown')
+    deps_count = len(context.dependencies.get('production', []))
+
+    console.print(Panel(
+        f"Task started successfully!\n\n"
+        f"Agent: {agent_id}\n"
+        f"Task: {task_name}\n"
+        f"Worktree: {worktree.path}\n"
+        f"Branch: {worktree.branch_name}\n\n"
+        f"Project Context:\n"
+        f"  Tech Stack: {tech_stack_str}\n"
+        f"  Architecture: {architecture}\n"
+        f"  Dependencies: {deps_count} packages\n\n"
+        f"When ready, use:\n"
+        f"  cam task-complete {agent_id} --project \"{project}\"",
+        title="Task Started",
+        border_style="green"
+    ))
+
+
+@app.command("task-complete")
+def task_complete(
+    agent_id: str = typer.Argument(..., help="ID агента"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+    auto_merge: bool = typer.Option(False, "--auto-merge", "-y", help="Автоматический merge без подтверждения"),
+    skip_validation: bool = typer.Option(False, "--skip-validation", help="Пропустить валидацию"),
+) -> None:
+    """
+    Завершить задачу с валидацией и merge.
+
+    1. Запускает валидацию (опционально)
+    2. Если OK - мержит worktree в main
+    3. Удаляет worktree
+    """
+    import asyncio
+    from rich.panel import Panel
+    from .worktree_manager import WorktreeManager
+    from .validation import ValidationAgent, print_validation_report
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    try:
+        wm = WorktreeManager(project)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+    worktrees = wm.list_worktrees()
+
+    agent_worktree = None
+    for wt in worktrees:
+        if wt.agent_id == agent_id:
+            agent_worktree = wt
+            break
+
+    if not agent_worktree:
+        console.print(f"[red]No worktree found for agent {agent_id}[/red]")
+        raise typer.Exit(1)
+
+    # 1. Validate (optional)
+    if not skip_validation:
+        console.print("[cyan]Step 1: Validating changes...[/cyan]")
+
+        # Get changed files
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "main"],
+                cwd=agent_worktree.path,
+                capture_output=True,
+                text=True
+            )
+
+            changed_files = [
+                agent_worktree.path / line.strip()
+                for line in result.stdout.split('\n')
+                if line.strip() and line.strip().endswith('.py')
+            ]
+        except:
+            changed_files = list(agent_worktree.path.rglob("*.py"))
+
+        if changed_files:
+            validator = ValidationAgent(agent_id, agent_worktree.path)
+            report = asyncio.run(validator.validate_changes(
+                changed_files,
+                run_tests=False,  # Skip tests for speed
+                check_types=True,
+                check_style=True,
+                check_security=True
+            ))
+
+            print_validation_report(report)
+
+            if report.has_critical_errors():
+                console.print("\n[red]Critical errors found! Cannot merge.[/red]")
+                console.print("[yellow]Fix errors and try again, or use --skip-validation to merge anyway[/yellow]")
+                raise typer.Exit(1)
+
+    # 2. Confirm merge
+    if not auto_merge:
+        import typer
+        confirm = typer.confirm("Validation passed. Merge to main?")
+        if not confirm:
+            console.print("[yellow]Merge cancelled[/yellow]")
+            return
+
+    # 3. Merge
+    console.print("[cyan]Step 2: Merging to main...[/cyan]")
+
+    success = wm.merge_worktree(agent_worktree, "main", delete_after=True)
+
+    if success:
+        console.print(Panel(
+            "Task completed successfully!\n\n"
+            "Changes validated and merged to main.\n"
+            "Worktree cleaned up.",
+            title="Task Complete",
+            border_style="green"
+        ))
+    else:
+        console.print("[red]Merge failed - resolve conflicts manually[/red]")
+        raise typer.Exit(1)
+
+
+# ==============================================================================
+# Changelog Commands
+# ==============================================================================
+
+@app.command("changelog")
+def changelog_cmd(
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+    from_tag: str = typer.Option("", "--from", "-f", help="Начальный тег"),
+    to_tag: str = typer.Option("HEAD", "--to", "-t", help="Конечный тег"),
+    version: str = typer.Option("Unreleased", "--version", "-v", help="Название версии"),
+    output: str = typer.Option(None, "--output", "-o", help="Сохранить в файл"),
+    github_release: bool = typer.Option(False, "--github-release", help="Создать GitHub Release"),
+) -> None:
+    """Сгенерировать changelog из git history."""
+    from .git.changelog import ChangelogGenerator, print_changelog
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    generator = ChangelogGenerator(project)
+    changelog = generator.generate(version, from_tag, to_tag)
+
+    print_changelog(changelog)
+
+    if output:
+        generator.save_changelog(changelog, output)
+
+    if github_release and version != "Unreleased":
+        generator.create_github_release(changelog, f"v{version}")
+
+
+# ==============================================================================
+# Conflict Resolution Commands
+# ==============================================================================
+
+@app.command("resolve-conflicts")
+def resolve_conflicts_cmd(
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+    file_path: str = typer.Option(None, "--file", "-f", help="Конкретный файл"),
+    auto_apply: bool = typer.Option(False, "--apply", "-a", help="Автоматически применить"),
+) -> None:
+    """AI-powered разрешение git конфликтов."""
+    from .git.conflict_resolver import ConflictResolver, print_conflict
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    resolver = ConflictResolver(project)
+
+    if file_path:
+        # Разрешаем конфликты в одном файле
+        result = resolver.resolve_file_conflicts(project / file_path)
+
+        if result.success:
+            console.print(f"[green]✓ Resolved {len(result.conflicts_resolved)} conflicts[/green]")
+
+            if auto_apply and result.merged_content:
+                (project / file_path).write_text(result.merged_content, encoding='utf-8')
+                console.print(f"[green]Applied to {file_path}[/green]")
+        else:
+            console.print(f"[yellow]Need manual review for {len(result.conflicts_remaining)} conflicts[/yellow]")
+            for conflict in result.conflicts_remaining:
+                print_conflict(conflict)
+    else:
+        # Разрешаем все конфликты
+        results = resolver.resolve_all(auto_apply=auto_apply)
+
+        success_count = sum(1 for r in results if r.success)
+        console.print(f"\n[green]Resolved: {success_count}/{len(results)} files[/green]")
+
+
+# ==============================================================================
+# Ideation / Feature Anticipation Commands
+# ==============================================================================
+
+@app.command("anticipate")
+def anticipate_cmd(
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+    types: str = typer.Option(None, "--types", "-t", help="Типы идей (comma-separated)"),
+    max_per_type: int = typer.Option(5, "--max", "-m", help="Макс. идей каждого типа"),
+) -> None:
+    """Сгенерировать идеи для улучшения проекта."""
+    from .ideation import IdeaGenerator, IdeaType, print_ideas
+
+    project = Path(project_path) if project_path else Path.cwd()
+
+    # Парсим типы
+    idea_types = None
+    if types:
+        type_names = [t.strip() for t in types.split(',')]
+        idea_types = []
+        for name in type_names:
+            try:
+                idea_types.append(IdeaType(name))
+            except ValueError:
+                console.print(f"[yellow]Unknown type: {name}[/yellow]")
+
+    generator = IdeaGenerator(project)
+    ideas = generator.generate_ideas(idea_types, max_per_type)
+
+    if ideas:
+        print_ideas(ideas)
+        console.print(f"\n[green]Generated {len(ideas)} ideas. Saved to .clod/ideas.json[/green]")
+    else:
+        console.print("[yellow]No improvement ideas found[/yellow]")
+
+
+# ==============================================================================
+# Kanban Board Commands
+# ==============================================================================
+
+@app.command("board")
+def board_cmd(
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+    show_archived: bool = typer.Option(False, "--archived", "-a", help="Показать архивные"),
+) -> None:
+    """Показать Kanban доску."""
+    from .tasks.kanban import KanbanBoard, print_board
+
+    project = Path(project_path) if project_path else Path.cwd()
+    board = KanbanBoard(project)
+    print_board(board, show_archived)
+
+
+@app.command("task-create")
+def task_create_cmd(
+    title: str = typer.Argument(..., help="Название задачи"),
+    description: str = typer.Option("", "--desc", "-d", help="Описание"),
+    priority: str = typer.Option("medium", "--priority", "-p", help="Приоритет: low/medium/high/urgent"),
+    task_type: str = typer.Option("feature", "--type", "-t", help="Тип: feature/bug/refactor/docs/test/chore"),
+    labels: str = typer.Option("", "--labels", "-l", help="Метки (comma-separated)"),
+    project_path: str = typer.Option(None, "--project", help="Путь к проекту"),
+) -> None:
+    """Создать новую задачу."""
+    from .tasks import KanbanBoard, TaskPriority, TaskType
+
+    project = Path(project_path) if project_path else Path.cwd()
+    board = KanbanBoard(project)
+
+    try:
+        prio = TaskPriority(priority.lower())
+    except ValueError:
+        prio = TaskPriority.MEDIUM
+
+    try:
+        ttype = TaskType(task_type.lower())
+    except ValueError:
+        ttype = TaskType.FEATURE
+
+    label_list = [l.strip() for l in labels.split(',') if l.strip()] if labels else []
+
+    task = board.create_task(title, description, prio, ttype, label_list)
+    console.print(f"[green]Created: {task}[/green]")
+
+
+@app.command("task-move")
+def task_move_cmd(
+    task_id: str = typer.Argument(..., help="ID задачи"),
+    status: str = typer.Argument(..., help="Статус: backlog/todo/in_progress/in_review/done"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+) -> None:
+    """Переместить задачу в другой статус."""
+    from .tasks import KanbanBoard, TaskStatus
+
+    project = Path(project_path) if project_path else Path.cwd()
+    board = KanbanBoard(project)
+
+    try:
+        new_status = TaskStatus(status.lower())
+    except ValueError:
+        console.print(f"[red]Invalid status: {status}[/red]")
+        raise typer.Exit(1)
+
+    board.move_task(task_id, new_status)
+
+
+@app.command("task-assign")
+def task_assign_cmd(
+    task_id: str = typer.Argument(..., help="ID задачи"),
+    agent_id: str = typer.Argument(..., help="ID агента"),
+    start: bool = typer.Option(False, "--start", "-s", help="Также начать работу"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+) -> None:
+    """Назначить задачу агенту."""
+    from .tasks import KanbanBoard
+
+    project = Path(project_path) if project_path else Path.cwd()
+    board = KanbanBoard(project)
+
+    board.assign_task(task_id, agent_id)
+
+    if start:
+        board.start_task(task_id, agent_id)
+
+
+@app.command("task-done")
+def task_done_cmd(
+    task_id: str = typer.Argument(..., help="ID задачи"),
+    project_path: str = typer.Option(None, "--project", "-p", help="Путь к проекту"),
+) -> None:
+    """Отметить задачу как выполненную."""
+    from .tasks import KanbanBoard
+
+    project = Path(project_path) if project_path else Path.cwd()
+    board = KanbanBoard(project)
+
+    board.complete_task(task_id)
+

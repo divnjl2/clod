@@ -1637,7 +1637,7 @@ class AgentCard(tk.Frame):
         )
         self.toggle_btn.pack(side=tk.RIGHT, padx=(6, 0))
 
-        # Port label - next to button
+        # Port label - next to button (with spacing)
         self.port_lbl = tk.Label(
             self.content,
             text=f":{agent['port']}",
@@ -1645,7 +1645,7 @@ class AgentCard(tk.Frame):
             bg=t["card_bg"],
             fg=t["accent"]
         )
-        self.port_lbl.pack(side=tk.RIGHT, padx=(4, 0))
+        self.port_lbl.pack(side=tk.RIGHT, padx=(8, 4))
 
         self._widgets = [self.content, self.left, self.top, self.purpose_lbl, self.port_lbl, self.info_frame, self.id_lbl, self.mem_lbl]
         if self.autopilot_badge:
@@ -1834,6 +1834,161 @@ class AgentCard(tk.Frame):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# USAGE BAR (Session limits display)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class UsageBar(tk.Frame):
+    """
+    Usage progress bar widget showing daily usage percentage and plan.
+
+    Displays: [████████░░░░░░░░] 48% • Max
+    Auto-refreshes from ~/.claude/stats-cache.json
+    """
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        theme: Dict,
+        plan_name: str = "Max",
+        daily_limit: int = 100000,
+        refresh_interval: int = 10000,  # 10 seconds
+        **kwargs
+    ):
+        super().__init__(parent, **kwargs)
+        self.theme = theme
+        self.plan_name = plan_name
+        self.daily_limit = daily_limit
+        self.refresh_interval = refresh_interval
+        self._usage_data: Dict = {}
+
+        self.configure(bg=theme["card_bg"])
+        self._build_ui()
+        self._refresh_usage()
+
+    def _build_ui(self):
+        t = self.theme
+
+        # Container for all elements (horizontal layout)
+        self.content = tk.Frame(self, bg=t["card_bg"])
+        self.content.pack(fill=tk.X, pady=(0, 4))
+
+        # Progress bar canvas
+        self.bar_canvas = tk.Canvas(
+            self.content,
+            width=120,
+            height=12,
+            bg=t["card_bg"],
+            highlightthickness=0
+        )
+        self.bar_canvas.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Draw initial empty bar
+        self._bar_bg = self.bar_canvas.create_rectangle(
+            0, 2, 120, 10,
+            fill=t["btn_bg"],
+            outline=""
+        )
+        self._bar_fill = self.bar_canvas.create_rectangle(
+            0, 2, 0, 10,
+            fill=t["accent"],
+            outline=""
+        )
+
+        # Percentage label
+        self.percent_lbl = tk.Label(
+            self.content,
+            text="0%",
+            font=("Consolas", 9),
+            bg=t["card_bg"],
+            fg=t["fg"]
+        )
+        self.percent_lbl.pack(side=tk.LEFT, padx=(0, 4))
+
+        # Separator dot
+        self.dot_lbl = tk.Label(
+            self.content,
+            text="•",
+            font=("Consolas", 9),
+            bg=t["card_bg"],
+            fg=t["fg_dim"]
+        )
+        self.dot_lbl.pack(side=tk.LEFT, padx=(0, 4))
+
+        # Plan label (e.g., "Max")
+        self.plan_lbl = tk.Label(
+            self.content,
+            text=self.plan_name,
+            font=("Consolas", 9),
+            bg=t["card_bg"],
+            fg=t["accent"]
+        )
+        self.plan_lbl.pack(side=tk.LEFT)
+
+    def _refresh_usage(self):
+        """Refresh usage data from stats file."""
+        try:
+            from .usage_stats import get_usage_display
+            self._usage_data = get_usage_display(self.plan_name, self.daily_limit)
+            self._update_display()
+        except Exception:
+            # Silently fail, keep last data
+            pass
+
+        # Schedule next refresh
+        self.after(self.refresh_interval, self._refresh_usage)
+
+    def _update_display(self):
+        """Update UI with current usage data."""
+        if not self._usage_data:
+            return
+
+        t = self.theme
+        percent = self._usage_data.get("percent", 0)
+        plan = self._usage_data.get("plan", self.plan_name)
+
+        # Update progress bar fill
+        bar_width = 120
+        fill_width = int(bar_width * min(percent, 100) / 100)
+        self.bar_canvas.coords(self._bar_fill, 0, 2, fill_width, 10)
+
+        # Color based on usage level
+        if percent >= 90:
+            fill_color = "#ef4444"  # Red
+        elif percent >= 70:
+            fill_color = "#f59e0b"  # Orange/amber
+        else:
+            fill_color = t["accent"]  # Normal accent
+        self.bar_canvas.itemconfig(self._bar_fill, fill=fill_color)
+
+        # Update labels
+        self.percent_lbl.configure(text=f"{percent:.0f}%")
+        self.plan_lbl.configure(text=plan)
+
+    def update_theme(self, theme: Dict):
+        """Update widget theme."""
+        self.theme = theme
+        t = theme
+
+        self.configure(bg=t["card_bg"])
+        self.content.configure(bg=t["card_bg"])
+        self.bar_canvas.configure(bg=t["card_bg"])
+        self.bar_canvas.itemconfig(self._bar_bg, fill=t["btn_bg"])
+        self.percent_lbl.configure(bg=t["card_bg"], fg=t["fg"])
+        self.dot_lbl.configure(bg=t["card_bg"], fg=t["fg_dim"])
+        self.plan_lbl.configure(bg=t["card_bg"], fg=t["accent"])
+
+        # Re-update display to apply color
+        self._update_display()
+
+    def set_plan(self, plan_name: str, daily_limit: int = None):
+        """Update plan and optionally limit, then refresh display."""
+        self.plan_name = plan_name
+        if daily_limit is not None:
+            self.daily_limit = daily_limit
+        self._refresh_usage()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN DASHBOARD
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1923,9 +2078,19 @@ class AgentDashboard:
 
         self.left_frame = left_frame
 
+        # Usage bar (session limits display)
+        self.usage_bar = UsageBar(
+            self.card,
+            theme=t,
+            plan_name="Max",  # Default plan
+            daily_limit=100000,  # 100k tokens for Max
+            refresh_interval=10000  # 10 seconds
+        )
+        self.usage_bar.pack(fill=tk.X, pady=(4, 0))
+
         # Separator
         self.sep = tk.Frame(self.card, bg=t["separator"], height=1)
-        self.sep.pack(fill=tk.X, pady=(0, 8))
+        self.sep.pack(fill=tk.X, pady=(4, 8))
 
         # Agents container - disable grid propagation
         self.agents_frame = tk.Frame(self.card, bg=t["card_bg"])
@@ -2173,6 +2338,9 @@ class AgentDashboard:
         self.sep.configure(bg=t["separator"])
         self.agents_frame.configure(bg=t["card_bg"])
 
+        # Update usage bar
+        self.usage_bar.update_theme(t)
+
         # Update existing cards
         for card in self.agent_cards:
             card.update_theme(t)
@@ -2389,8 +2557,9 @@ class AgentDashboard:
             self.root.minsize(900, 350)
             self.root.geometry("950x380")
 
-            # Hide card chrome (header, separator, footer) for clean setup screen
+            # Hide card chrome (header, usage_bar, separator, footer) for clean setup screen
             self.header.pack_forget()
+            self.usage_bar.pack_forget()
             self.sep.pack_forget()
             self.footer.pack_forget()
 
@@ -2753,9 +2922,10 @@ class AgentDashboard:
             self._ui_mode = 'dashboard'
             self.root.minsize(460, 400)
 
-            # Restore card chrome (header, separator, footer)
+            # Restore card chrome (header, usage_bar, separator, footer)
             self.header.pack(fill=tk.X, pady=(0, 8), before=self.agents_frame)
-            self.sep.pack(fill=tk.X, pady=(0, 8), before=self.agents_frame)
+            self.usage_bar.pack(fill=tk.X, pady=(4, 0), before=self.agents_frame)
+            self.sep.pack(fill=tk.X, pady=(4, 8), before=self.agents_frame)
             self.footer.pack(fill=tk.X, pady=(4, 0), after=self.agents_frame)
 
             # Restore card - fill entire window (no empty space)
