@@ -1247,3 +1247,81 @@ def task_done_cmd(
 
     board.complete_task(task_id)
 
+
+# =============================================================================
+# Phase 3: Metrics & Dashboard commands
+# =============================================================================
+
+@app.command("metrics")
+def metrics_cmd(
+    agent_id: str = typer.Option(None, "--agent", "-a", help="ID агента (опционально)"),
+    time_range: str = typer.Option("day", "--range", "-r", help="Период: hour/day/week/month/all"),
+    export_path: str = typer.Option(None, "--export", "-e", help="Экспортировать в JSON"),
+) -> None:
+    """Показать метрики (глобальные или агента)."""
+    from .monitoring.metrics import MetricsCollector, TimeRange, print_metrics_summary
+
+    collector = MetricsCollector()
+
+    try:
+        tr = TimeRange(time_range.lower())
+    except ValueError:
+        console.print(f"[red]Invalid time range: {time_range}[/red]")
+        raise typer.Exit(1)
+
+    if export_path:
+        collector.export_metrics(Path(export_path), tr)
+        console.print(f"[green]✓[/green] Metrics exported to {export_path}")
+    else:
+        print_metrics_summary(collector, agent_id)
+
+
+@app.command("metrics-dashboard")
+def metrics_dashboard_cmd(
+    time_range: str = typer.Option("day", "--range", "-r", help="Период: hour/day/week/month"),
+    live: bool = typer.Option(False, "--live", "-l", help="Live-режим с обновлением"),
+) -> None:
+    """Показать терминальный дашборд метрик."""
+    from .monitoring.metrics import MetricsCollector, TimeRange
+    from .monitoring.dashboard import render_dashboard
+
+    collector = MetricsCollector()
+
+    try:
+        tr = TimeRange(time_range.lower())
+    except ValueError:
+        console.print(f"[red]Invalid time range: {time_range}[/red]")
+        raise typer.Exit(1)
+
+    render_dashboard(collector, tr, live=live)
+
+
+@app.command("metrics-cleanup")
+def metrics_cleanup_cmd(
+    days: int = typer.Option(90, "--days", "-d", help="Хранить метрики за N дней"),
+) -> None:
+    """Очистить старые метрики."""
+    from .monitoring.metrics import MetricsCollector
+
+    collector = MetricsCollector()
+    deleted = collector.cleanup_old_metrics(days)
+    console.print(f"[green]✓[/green] Deleted {deleted} old metrics records")
+
+
+@app.command("web")
+def web_cmd(
+    port: int = typer.Option(8080, "--port", "-p", help="Порт"),
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Хост"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Режим отладки"),
+) -> None:
+    """Запустить веб-дашборд."""
+    try:
+        from .web import run_server
+    except ImportError:
+        console.print("[red]FastAPI not installed![/red]")
+        console.print("Install with: pip install fastapi uvicorn websockets")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Starting web dashboard on http://{host}:{port}[/green]")
+    run_server(port=port, host=host, debug=debug)
+
