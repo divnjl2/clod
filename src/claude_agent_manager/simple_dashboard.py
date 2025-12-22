@@ -1608,19 +1608,29 @@ class AgentCard(tk.Frame):
         )
         self.mem_lbl.pack(side=tk.LEFT, padx=(8, 0))
 
+        # Port label - compact, in info row
+        self.port_lbl = tk.Label(
+            self.info_frame,
+            text=f":{agent['port']}",
+            font=("Consolas", 7),
+            bg=t["card_bg"],
+            fg=t["fg_dim"]
+        )
+        self.port_lbl.pack(side=tk.LEFT, padx=(8, 0))
+
         # Autopilot indicator
         self.autopilot_badge = None
         if agent.get("autopilot_enabled", False):
             self.autopilot_badge = tk.Label(
                 self.info_frame,
-                text=" ⚡ auto",
+                text="⚡auto",
                 font=("Consolas", 7),
                 bg=t["card_bg"],
                 fg=t["accent"]
             )
-            self.autopilot_badge.pack(side=tk.LEFT, padx=(4, 0))
+            self.autopilot_badge.pack(side=tk.LEFT, padx=(6, 0))
 
-        # Right side: Port + Toggle button (same level)
+        # Right side: Toggle button only
         btn_style = "stop" if status == "online" else "start"
         btn_text = "Stop" if status == "online" else "Start"
 
@@ -1631,21 +1641,11 @@ class AgentCard(tk.Frame):
             theme=t,
             style=btn_style,
             font_size=8,
-            padx=8,
-            pady=2,
-            bg=t["card_bg"]  # Match parent bg to hide corners
+            padx=10,
+            pady=3,
+            bg=t["card_bg"]
         )
-        self.toggle_btn.pack(side=tk.RIGHT, padx=(6, 0))
-
-        # Port label - next to button (with spacing)
-        self.port_lbl = tk.Label(
-            self.content,
-            text=f":{agent['port']}",
-            font=("Consolas", 8),
-            bg=t["card_bg"],
-            fg=t["accent"]
-        )
-        self.port_lbl.pack(side=tk.RIGHT, padx=(8, 4))
+        self.toggle_btn.pack(side=tk.RIGHT, padx=(8, 0))
 
         self._widgets = [self.content, self.left, self.top, self.purpose_lbl, self.port_lbl, self.info_frame, self.id_lbl, self.mem_lbl]
         if self.autopilot_badge:
@@ -1818,8 +1818,8 @@ class AgentCard(tk.Frame):
         
         # Update labels with correct colors from new layout
         self.purpose_lbl.configure(bg=bg, fg=t["fg"])  # Name is primary - fg color
-        self.port_lbl.configure(bg=bg, fg=t["accent"])  # Port is accent color
         self.id_lbl.configure(bg=bg, fg=t["fg_dim"])  # ID is dimmed
+        self.port_lbl.configure(bg=bg, fg=t["fg_dim"])  # Port is dimmed (in info row)
         
         # Update memory indicator
         status = self.agent_data.get("status", "offline")
