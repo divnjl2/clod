@@ -160,7 +160,7 @@ class EmbeddedConsole(tk.Frame):
         self._setup_style()
 
     def _build_ui(self) -> None:
-        """Build the wrapper UI around embedded console."""
+        """Build the wrapper UI around embedded console. VS Code style toolbar."""
         self.configure(bg=self.theme["bg"])
 
         # State for pin
@@ -171,9 +171,9 @@ class EmbeddedConsole(tk.Frame):
         self.toolbar.pack(fill="x", side="top")
         self.toolbar.pack_propagate(False)
 
-        # === LEFT SIDE: Agent info ===
-        left_frame = tk.Frame(self.toolbar, bg=self.theme["bg"])
-        left_frame.pack(side="left", padx=5)
+        # === SECTION 1: Agent info (icon + name + status) ===
+        info_frame = tk.Frame(self.toolbar, bg=self.theme["bg"])
+        info_frame.pack(side="left", padx=(8, 0))
 
         # App icon (small logo)
         self._icon_image = None
@@ -182,132 +182,207 @@ class EmbeddedConsole(tk.Frame):
             icon_path = Path(__file__).parent.parent.parent.parent / "assets" / "icon_white.png"
             if icon_path.exists():
                 img = Image.open(icon_path)
-                img = img.resize((20, 20), Image.Resampling.LANCZOS)
+                img = img.resize((18, 18), Image.Resampling.LANCZOS)
                 self._icon_image = ImageTk.PhotoImage(img)
                 icon_label = tk.Label(
-                    left_frame,
+                    info_frame,
                     image=self._icon_image,
                     bg=self.theme["bg"],
                 )
-                icon_label.pack(side="left", padx=(2, 6))
+                icon_label.pack(side="left", padx=(0, 6))
         except ImportError:
             pass  # PIL not available, skip icon
 
         # Agent name label
         self.name_label = tk.Label(
-            left_frame,
+            info_frame,
             text=self.agent_name,
-            font=("Segoe UI", 10, "bold"),
+            font=("Segoe UI Semibold", 9),
             fg=self.theme["fg"],
             bg=self.theme["bg"],
-            anchor="w",
         )
-        self.name_label.pack(side="left", pady=5)
+        self.name_label.pack(side="left")
 
         # Status indicator
         self.status_dot = tk.Label(
-            left_frame,
+            info_frame,
             text="●",
-            font=("Segoe UI", 8),
+            font=("Segoe UI", 7),
             fg="#4ec9b0",  # Green for running
             bg=self.theme["bg"],
         )
-        self.status_dot.pack(side="left", padx=(4, 8))
+        self.status_dot.pack(side="left", padx=(6, 0))
 
-        # Separator
-        sep1 = tk.Label(left_frame, text="│", fg="#404040", bg=self.theme["bg"], font=("Segoe UI", 10))
-        sep1.pack(side="left", padx=2)
+        # === SEPARATOR 1 ===
+        sep1 = tk.Label(self.toolbar, text="│", fg="#3a3a3a", bg=self.theme["bg"], font=("Consolas", 12))
+        sep1.pack(side="left", padx=(12, 12))
 
-        # Path label (will be set when start() is called)
+        # === SECTION 2: Path ===
+        path_frame = tk.Frame(self.toolbar, bg=self.theme["bg"])
+        path_frame.pack(side="left")
+
         self.path_label = tk.Label(
-            left_frame,
+            path_frame,
             text="",
-            font=("Segoe UI", 8),
-            fg="#808080",
+            font=("Consolas", 8),
+            fg="#6a6a6a",
             bg=self.theme["bg"],
-            anchor="w",
         )
-        self.path_label.pack(side="left", padx=(4, 0))
+        self.path_label.pack(side="left")
 
-        # === CENTER: Action buttons ===
-        center_frame = tk.Frame(self.toolbar, bg=self.theme["bg"])
-        center_frame.pack(side="left", padx=10)
+        # === SEPARATOR 2 ===
+        sep2 = tk.Label(self.toolbar, text="│", fg="#3a3a3a", bg=self.theme["bg"], font=("Consolas", 12))
+        sep2.pack(side="left", padx=(12, 12))
+
+        # === SECTION 3: Action buttons ===
+        actions_frame = tk.Frame(self.toolbar, bg=self.theme["bg"])
+        actions_frame.pack(side="left")
+
+        # Button style helper
+        btn_cfg = {
+            "font": ("Segoe UI", 9),
+            "bg": self.theme["bg"],  # Flat, same as toolbar
+            "activebackground": self.theme["button_hover"],
+            "relief": "flat",
+            "bd": 0,
+            "padx": 6,
+            "pady": 2,
+            "cursor": "hand2",
+        }
 
         # Open folder button
         self.folder_btn = tk.Button(
-            center_frame,
+            actions_frame,
             text="📁",
-            font=("Segoe UI", 9),
             fg=self.theme["fg"],
-            bg=self.theme["button_bg"],
-            activebackground=self.theme["button_hover"],
             activeforeground=self.theme["fg"],
-            relief="flat",
-            width=3,
-            cursor="hand2",
             command=self._on_open_folder,
+            **btn_cfg
         )
-        self.folder_btn.pack(side="left", padx=1, pady=4)
+        self.folder_btn.pack(side="left", padx=1)
         self._bind_hover(self.folder_btn)
-        self._add_tooltip(self.folder_btn, "Open memory folder")
+        self._add_tooltip(self.folder_btn, "Open folder")
 
         # Interrupt button (Ctrl+C)
         self.interrupt_btn = tk.Button(
-            center_frame,
+            actions_frame,
             text="⏹",
-            font=("Segoe UI", 9),
             fg="#f87171",
-            bg=self.theme["button_bg"],
-            activebackground=self.theme["button_hover"],
             activeforeground="#f87171",
-            relief="flat",
-            width=3,
-            cursor="hand2",
             command=self._on_interrupt,
+            **btn_cfg
         )
-        self.interrupt_btn.pack(side="left", padx=1, pady=4)
+        self.interrupt_btn.pack(side="left", padx=1)
         self._bind_hover(self.interrupt_btn)
-        self._add_tooltip(self.interrupt_btn, "Send Ctrl+C")
+        self._add_tooltip(self.interrupt_btn, "Interrupt (Ctrl+C)")
 
         # Clear screen button
         self.clear_btn = tk.Button(
-            center_frame,
+            actions_frame,
             text="🧹",
-            font=("Segoe UI", 9),
             fg=self.theme["fg"],
-            bg=self.theme["button_bg"],
-            activebackground=self.theme["button_hover"],
             activeforeground=self.theme["fg"],
-            relief="flat",
-            width=3,
-            cursor="hand2",
             command=self._on_clear_screen,
+            **btn_cfg
         )
-        self.clear_btn.pack(side="left", padx=1, pady=4)
+        self.clear_btn.pack(side="left", padx=1)
         self._bind_hover(self.clear_btn)
-        self._add_tooltip(self.clear_btn, "Clear screen (Ctrl+L)")
+        self._add_tooltip(self.clear_btn, "Clear (Ctrl+L)")
 
         # Pin on top button
         self.pin_btn = tk.Button(
-            center_frame,
+            actions_frame,
             text="📌",
-            font=("Segoe UI", 9),
             fg=self.theme["fg"],
-            bg=self.theme["button_bg"],
-            activebackground=self.theme["button_hover"],
             activeforeground=self.theme["fg"],
-            relief="flat",
-            width=3,
-            cursor="hand2",
             command=self._on_toggle_pin,
+            **btn_cfg
         )
-        self.pin_btn.pack(side="left", padx=1, pady=4)
+        self.pin_btn.pack(side="left", padx=1)
         self._bind_hover(self.pin_btn)
         self._add_tooltip(self.pin_btn, "Pin on top")
 
+        # === SEPARATOR 3 ===
+        sep3 = tk.Label(self.toolbar, text="│", fg="#3a3a3a", bg=self.theme["bg"], font=("Consolas", 12))
+        sep3.pack(side="left", padx=(12, 12))
+
+        # === SECTION 4: Two progress bars ===
+        limits_frame = tk.Frame(self.toolbar, bg=self.theme["bg"])
+        limits_frame.pack(side="left")
+
+        self.progress_width = 60
+        self.progress_height = 10
+
+        # --- USAGE (subscription limit) ---
+        usage_frame = tk.Frame(limits_frame, bg=self.theme["bg"])
+        usage_frame.pack(side="left", padx=(0, 8))
+
+        usage_label = tk.Label(
+            usage_frame, text="5h", font=("Consolas", 7),
+            fg="#6a6a6a", bg=self.theme["bg"]
+        )
+        usage_label.pack(side="left", padx=(0, 3))
+
+        self.usage_canvas = tk.Canvas(
+            usage_frame, width=self.progress_width, height=self.progress_height,
+            bg=self.theme["bg"], highlightthickness=0
+        )
+        self.usage_canvas.pack(side="left")
+
+        self.usage_canvas.create_rectangle(
+            0, 0, self.progress_width, self.progress_height,
+            fill="#1a2e1a", outline="#2a4a2a", tags="bg"
+        )
+        self.usage_bar = self.usage_canvas.create_rectangle(
+            0, 0, 0, self.progress_height,
+            fill="#4ade80", outline="", tags="fill"
+        )
+
+        self.usage_pct = tk.Label(
+            usage_frame, text="0%", font=("Consolas", 7),
+            fg="#6a6a6a", bg=self.theme["bg"]
+        )
+        self.usage_pct.pack(side="left", padx=(3, 0))
+        self._add_tooltip(self.usage_canvas, "5-hour usage limit")
+
+        # --- CONTEXT (session context) ---
+        ctx_frame = tk.Frame(limits_frame, bg=self.theme["bg"])
+        ctx_frame.pack(side="left")
+
+        ctx_label = tk.Label(
+            ctx_frame, text="7d", font=("Consolas", 7),
+            fg="#6a6a6a", bg=self.theme["bg"]
+        )
+        ctx_label.pack(side="left", padx=(0, 3))
+
+        self.ctx_canvas = tk.Canvas(
+            ctx_frame, width=self.progress_width, height=self.progress_height,
+            bg=self.theme["bg"], highlightthickness=0
+        )
+        self.ctx_canvas.pack(side="left")
+
+        self.ctx_canvas.create_rectangle(
+            0, 0, self.progress_width, self.progress_height,
+            fill="#1a1a1a", outline="#2a2a2a", tags="bg"
+        )
+        self.ctx_bar = self.ctx_canvas.create_rectangle(
+            0, 0, 0, self.progress_height,
+            fill="#888888", outline="", tags="fill"
+        )
+
+        self.ctx_pct = tk.Label(
+            ctx_frame, text="0%", font=("Consolas", 7),
+            fg="#6a6a6a", bg=self.theme["bg"]
+        )
+        self.ctx_pct.pack(side="left", padx=(3, 0))
+        self._add_tooltip(self.ctx_canvas, "7-day usage limit")
+
+        # Start background usage update
+        self._start_usage_monitor()
+
         # === RIGHT SIDE: Window controls ===
         right_frame = tk.Frame(self.toolbar, bg=self.theme["bg"])
-        right_frame.pack(side="right", padx=5)
+        right_frame.pack(side="right", padx=(0, 4))
 
         # Close button
         self.close_btn = tk.Button(
@@ -362,12 +437,91 @@ class EmbeddedConsole(tk.Frame):
 
     def _bind_hover(self, button: tk.Button) -> None:
         """Add hover effect to button."""
+        original_bg = button.cget("bg")
         def on_enter(e):
             button.configure(bg=self.theme["button_hover"])
         def on_leave(e):
-            button.configure(bg=self.theme["button_bg"])
+            button.configure(bg=original_bg)
         button.bind("<Enter>", on_enter)
         button.bind("<Leave>", on_leave)
+
+    def update_usage(self, percent: float) -> None:
+        """Update subscription usage progress bar (green)."""
+        percent = max(0, min(100, percent))
+        fill_width = int((percent / 100) * self.progress_width)
+
+        self.usage_canvas.coords(self.usage_bar, 0, 0, fill_width, self.progress_height)
+        self.usage_canvas.itemconfig(self.usage_bar, fill="#4ade80")
+        self.usage_pct.configure(text=f"{int(percent)}%")
+
+    def update_context(self, percent: float) -> None:
+        """Update session context progress bar (blue)."""
+        percent = max(0, min(100, percent))
+        fill_width = int((percent / 100) * self.progress_width)
+
+        self.ctx_canvas.coords(self.ctx_bar, 0, 0, fill_width, self.progress_height)
+        self.ctx_canvas.itemconfig(self.ctx_bar, fill="#888888")
+        self.ctx_pct.configure(text=f"{int(percent)}%")
+
+    def _start_usage_monitor(self) -> None:
+        """Start background thread to monitor Claude usage stats."""
+        self._usage_monitor_active = True
+        self._update_usage()
+
+    def _update_usage(self) -> None:
+        """Fetch real usage data from Claude API."""
+        if not self._usage_monitor_active:
+            return
+
+        try:
+            import json
+            import urllib.request
+            import urllib.error
+
+            # Read OAuth token
+            creds_path = Path.home() / ".claude" / ".credentials.json"
+            if not creds_path.exists():
+                return
+
+            with open(creds_path, "r", encoding="utf-8") as f:
+                creds = json.load(f)
+
+            token = creds.get("claudeAiOauth", {}).get("accessToken")
+            if not token:
+                return
+
+            # Fetch usage from API
+            req = urllib.request.Request(
+                "https://api.anthropic.com/api/oauth/usage",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "anthropic-beta": "oauth-2025-04-20",
+                }
+            )
+
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+
+            # === USAGE BAR (5-hour limit) ===
+            five_hour = data.get("five_hour", {})
+            usage_pct = five_hour.get("utilization", 0)  # Already in %
+            self.update_usage(usage_pct)
+
+            # === CONTEXT BAR (7-day limit) ===
+            seven_day = data.get("seven_day", {})
+            ctx_pct = seven_day.get("utilization", 0)  # Already in %
+            self.update_context(ctx_pct)
+
+        except Exception:
+            pass  # Silently ignore errors
+
+        # Schedule next update in 30 seconds
+        if self._usage_monitor_active:
+            self.after(30000, self._update_usage)
+
+    def _stop_usage_monitor(self) -> None:
+        """Stop the usage monitor."""
+        self._usage_monitor_active = False
 
     def start(self, cmd: str, cwd: str, env: Optional[Dict] = None) -> bool:
         """
@@ -702,6 +856,7 @@ class EmbeddedConsole(tk.Frame):
     def stop(self) -> None:
         """Stop the embedded console process."""
         self.running = False
+        self._stop_usage_monitor()
 
         # Detach thread input
         if hasattr(self, "_attached_thread") and self._attached_thread:
@@ -826,9 +981,9 @@ class EmbeddedConsole(tk.Frame):
 
         def show_tooltip(event):
             nonlocal tooltip
-            x, y, _, _ = widget.bbox("insert") if hasattr(widget, "bbox") else (0, 0, 0, 0)
-            x += widget.winfo_rootx() + 25
-            y += widget.winfo_rooty() + 25
+            # Use event coordinates for tooltip position
+            x = widget.winfo_rootx() + 25
+            y = widget.winfo_rooty() + widget.winfo_height() + 5
 
             tooltip = tk.Toplevel(widget)
             tooltip.wm_overrideredirect(True)
