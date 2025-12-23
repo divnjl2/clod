@@ -174,10 +174,28 @@ class EmbeddedConsole(tk.Frame):
         left_frame = tk.Frame(self.toolbar, bg=self.theme["bg"])
         left_frame.pack(side="left", padx=5)
 
+        # App icon (small logo)
+        self._icon_image = None
+        try:
+            from PIL import Image, ImageTk
+            icon_path = Path(__file__).parent.parent.parent.parent / "assets" / "icon_white.png"
+            if icon_path.exists():
+                img = Image.open(icon_path)
+                img = img.resize((20, 20), Image.Resampling.LANCZOS)
+                self._icon_image = ImageTk.PhotoImage(img)
+                icon_label = tk.Label(
+                    left_frame,
+                    image=self._icon_image,
+                    bg=self.theme["bg"],
+                )
+                icon_label.pack(side="left", padx=(2, 6))
+        except ImportError:
+            pass  # PIL not available, skip icon
+
         # Agent name label
         self.name_label = tk.Label(
             left_frame,
-            text=f" {self.agent_name}",
+            text=self.agent_name,
             font=("Segoe UI", 10, "bold"),
             fg=self.theme["fg"],
             bg=self.theme["bg"],
