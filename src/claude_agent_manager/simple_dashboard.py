@@ -1834,15 +1834,18 @@ class AgentCard(tk.Frame):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# USAGE BAR (Session limits display)
+# USAGE BAR (Session limits display - Real API)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class UsageBar(tk.Frame):
     """
-    Usage progress bar widget showing daily usage percentage and plan.
+    Usage progress bar widget showing real Claude API limits.
 
-    Displays: [████████░░░░░░░░] 48% • Max
-    Auto-refreshes from ~/.claude/stats-cache.json
+    Displays two bars:
+    - 5h: 5-hour rolling usage (green)
+    - 7d: 7-day rolling usage (gray)
+
+    Auto-refreshes from Anthropic API every 30 seconds.
     """
 
     def __init__(
@@ -1851,7 +1854,7 @@ class UsageBar(tk.Frame):
         theme: Dict,
         plan_name: str = "Max",
         daily_limit: int = 100000,
-        refresh_interval: int = 10000,  # 10 seconds
+        refresh_interval: int = 30000,  # 30 seconds
         **kwargs
     ):
         super().__init__(parent, **kwargs)
@@ -1859,7 +1862,9 @@ class UsageBar(tk.Frame):
         self.plan_name = plan_name
         self.daily_limit = daily_limit
         self.refresh_interval = refresh_interval
-        self._usage_data: Dict = {}
+        self._five_hour_pct: float = 0.0
+        self._seven_day_pct: float = 0.0
+        self._active = True
 
         self.configure(bg=theme["card_bg"])
         self._build_ui()
@@ -1872,97 +1877,177 @@ class UsageBar(tk.Frame):
         self.content = tk.Frame(self, bg=t["card_bg"])
         self.content.pack(fill=tk.X, pady=(0, 4))
 
-        # Progress bar canvas
-        self.bar_canvas = tk.Canvas(
-            self.content,
-            width=120,
-            height=12,
-            bg=t["card_bg"],
-            highlightthickness=0
-        )
-        self.bar_canvas.pack(side=tk.LEFT, padx=(0, 6))
+        # --- 5-hour bar (green) ---
+        self.bar_5h_frame = tk.Frame(self.content, bg=t["card_bg"])
+        self.bar_5h_frame.pack(side=tk.LEFT, padx=(0, 8))
 
-        # Draw initial empty bar
-        self._bar_bg = self.bar_canvas.create_rectangle(
-            0, 2, 120, 10,
-            fill=t["btn_bg"],
-            outline=""
-        )
-        self._bar_fill = self.bar_canvas.create_rectangle(
-            0, 2, 0, 10,
-            fill=t["accent"],
-            outline=""
-        )
-
-        # Percentage label
-        self.percent_lbl = tk.Label(
-            self.content,
-            text="0%",
-            font=("Consolas", 9),
-            bg=t["card_bg"],
-            fg=t["fg"]
-        )
-        self.percent_lbl.pack(side=tk.LEFT, padx=(0, 4))
-
-        # Separator dot
-        self.dot_lbl = tk.Label(
-            self.content,
-            text="•",
-            font=("Consolas", 9),
+        self.lbl_5h = tk.Label(
+            self.bar_5h_frame,
+            text="5h",
+            font=("Consolas", 7),
             bg=t["card_bg"],
             fg=t["fg_dim"]
         )
-        self.dot_lbl.pack(side=tk.LEFT, padx=(0, 4))
+        self.lbl_5h.pack(side=tk.LEFT, padx=(0, 2))
+
+        self.canvas_5h = tk.Canvas(
+            self.bar_5h_frame,
+            width=60,
+            height=10,
+            bg=t["btn_bg"],
+            highlightthickness=0
+        )
+        self.canvas_5h.pack(side=tk.LEFT)
+
+        self._bar_5h_fill = self.canvas_5h.create_rectangle(
+            0, 0, 0, 10,
+            fill="#4ade80",  # Green
+            outline=""
+        )
+
+        self.pct_5h = tk.Label(
+            self.bar_5h_frame,
+            text="0%",
+            font=("Consolas", 7),
+            bg=t["card_bg"],
+            fg=t["fg_dim"]
+        )
+        self.pct_5h.pack(side=tk.LEFT, padx=(2, 0))
+
+        # --- 7-day bar (gray) ---
+        self.bar_7d_frame = tk.Frame(self.content, bg=t["card_bg"])
+        self.bar_7d_frame.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.lbl_7d = tk.Label(
+            self.bar_7d_frame,
+            text="7d",
+            font=("Consolas", 7),
+            bg=t["card_bg"],
+            fg=t["fg_dim"]
+        )
+        self.lbl_7d.pack(side=tk.LEFT, padx=(0, 2))
+
+        self.canvas_7d = tk.Canvas(
+            self.bar_7d_frame,
+            width=60,
+            height=10,
+            bg=t["btn_bg"],
+            highlightthickness=0
+        )
+        self.canvas_7d.pack(side=tk.LEFT)
+
+        self._bar_7d_fill = self.canvas_7d.create_rectangle(
+            0, 0, 0, 10,
+            fill="#888888",  # Gray
+            outline=""
+        )
+
+        self.pct_7d = tk.Label(
+            self.bar_7d_frame,
+            text="0%",
+            font=("Consolas", 7),
+            bg=t["card_bg"],
+            fg=t["fg_dim"]
+        )
+        self.pct_7d.pack(side=tk.LEFT, padx=(2, 0))
 
         # Plan label (e.g., "Max")
         self.plan_lbl = tk.Label(
             self.content,
             text=self.plan_name,
-            font=("Consolas", 9),
+            font=("Consolas", 8),
             bg=t["card_bg"],
             fg=t["accent"]
         )
-        self.plan_lbl.pack(side=tk.LEFT)
+        self.plan_lbl.pack(side=tk.LEFT, padx=(4, 0))
 
     def _refresh_usage(self):
-        """Refresh usage data from stats file."""
+        """Refresh usage data from Anthropic API."""
+        if not self._active:
+            return
+
         try:
-            from .usage_stats import get_usage_display
-            self._usage_data = get_usage_display(self.plan_name, self.daily_limit)
+            import json
+            import urllib.request
+            from pathlib import Path
+
+            creds_path = Path.home() / ".claude" / ".credentials.json"
+            if not creds_path.exists():
+                return
+
+            with open(creds_path, "r", encoding="utf-8") as f:
+                creds = json.load(f)
+
+            token = creds.get("claudeAiOauth", {}).get("accessToken")
+            if not token:
+                return
+
+            # Update plan from credentials
+            sub_type = creds.get("claudeAiOauth", {}).get("subscriptionType", "")
+            if sub_type:
+                self.plan_name = sub_type.capitalize()
+                self.plan_lbl.configure(text=self.plan_name)
+
+            req = urllib.request.Request(
+                "https://api.anthropic.com/api/oauth/usage",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "anthropic-beta": "oauth-2025-04-20",
+                }
+            )
+
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+
+            # Data already in % (0-100)
+            five_hour = data.get("five_hour", {})
+            self._five_hour_pct = five_hour.get("utilization", 0)
+
+            seven_day = data.get("seven_day", {})
+            self._seven_day_pct = seven_day.get("utilization", 0)
+
             self._update_display()
+
         except Exception:
             # Silently fail, keep last data
             pass
 
         # Schedule next refresh
-        self.after(self.refresh_interval, self._refresh_usage)
+        if self._active:
+            self.after(self.refresh_interval, self._refresh_usage)
 
     def _update_display(self):
         """Update UI with current usage data."""
-        if not self._usage_data:
-            return
-
         t = self.theme
-        percent = self._usage_data.get("percent", 0)
-        plan = self._usage_data.get("plan", self.plan_name)
+        bar_width = 60
 
-        # Update progress bar fill
-        bar_width = 120
-        fill_width = int(bar_width * min(percent, 100) / 100)
-        self.bar_canvas.coords(self._bar_fill, 0, 2, fill_width, 10)
+        # 5-hour bar
+        pct_5h = min(self._five_hour_pct, 100)
+        fill_5h = int(bar_width * pct_5h / 100)
+        self.canvas_5h.coords(self._bar_5h_fill, 0, 0, fill_5h, 10)
+        self.pct_5h.configure(text=f"{pct_5h:.0f}%")
 
         # Color based on usage level
-        if percent >= 90:
-            fill_color = "#ef4444"  # Red
-        elif percent >= 70:
-            fill_color = "#f59e0b"  # Orange/amber
+        if pct_5h >= 90:
+            self.canvas_5h.itemconfig(self._bar_5h_fill, fill="#ef4444")  # Red
+        elif pct_5h >= 70:
+            self.canvas_5h.itemconfig(self._bar_5h_fill, fill="#f59e0b")  # Orange
         else:
-            fill_color = t["accent"]  # Normal accent
-        self.bar_canvas.itemconfig(self._bar_fill, fill=fill_color)
+            self.canvas_5h.itemconfig(self._bar_5h_fill, fill="#4ade80")  # Green
 
-        # Update labels
-        self.percent_lbl.configure(text=f"{percent:.0f}%")
-        self.plan_lbl.configure(text=plan)
+        # 7-day bar
+        pct_7d = min(self._seven_day_pct, 100)
+        fill_7d = int(bar_width * pct_7d / 100)
+        self.canvas_7d.coords(self._bar_7d_fill, 0, 0, fill_7d, 10)
+        self.pct_7d.configure(text=f"{pct_7d:.0f}%")
+
+        # Color based on usage level
+        if pct_7d >= 90:
+            self.canvas_7d.itemconfig(self._bar_7d_fill, fill="#ef4444")  # Red
+        elif pct_7d >= 70:
+            self.canvas_7d.itemconfig(self._bar_7d_fill, fill="#f59e0b")  # Orange
+        else:
+            self.canvas_7d.itemconfig(self._bar_7d_fill, fill="#888888")  # Gray
 
     def update_theme(self, theme: Dict):
         """Update widget theme."""
@@ -1971,21 +2056,36 @@ class UsageBar(tk.Frame):
 
         self.configure(bg=t["card_bg"])
         self.content.configure(bg=t["card_bg"])
-        self.bar_canvas.configure(bg=t["card_bg"])
-        self.bar_canvas.itemconfig(self._bar_bg, fill=t["btn_bg"])
-        self.percent_lbl.configure(bg=t["card_bg"], fg=t["fg"])
-        self.dot_lbl.configure(bg=t["card_bg"], fg=t["fg_dim"])
+
+        # 5h bar
+        self.bar_5h_frame.configure(bg=t["card_bg"])
+        self.lbl_5h.configure(bg=t["card_bg"], fg=t["fg_dim"])
+        self.canvas_5h.configure(bg=t["btn_bg"])
+        self.pct_5h.configure(bg=t["card_bg"], fg=t["fg_dim"])
+
+        # 7d bar
+        self.bar_7d_frame.configure(bg=t["card_bg"])
+        self.lbl_7d.configure(bg=t["card_bg"], fg=t["fg_dim"])
+        self.canvas_7d.configure(bg=t["btn_bg"])
+        self.pct_7d.configure(bg=t["card_bg"], fg=t["fg_dim"])
+
         self.plan_lbl.configure(bg=t["card_bg"], fg=t["accent"])
 
-        # Re-update display to apply color
+        # Re-update display to apply colors
         self._update_display()
 
     def set_plan(self, plan_name: str, daily_limit: int = None):
         """Update plan and optionally limit, then refresh display."""
         self.plan_name = plan_name
+        self.plan_lbl.configure(text=plan_name)
         if daily_limit is not None:
             self.daily_limit = daily_limit
         self._refresh_usage()
+
+    def destroy(self):
+        """Stop refresh loop before destroying."""
+        self._active = False
+        super().destroy()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2078,13 +2178,11 @@ class AgentDashboard:
 
         self.left_frame = left_frame
 
-        # Usage bar (session limits display)
+        # Usage bar (session limits display - real API data)
         self.usage_bar = UsageBar(
             self.card,
             theme=t,
-            plan_name="Max",  # Default plan
-            daily_limit=100000,  # 100k tokens for Max
-            refresh_interval=10000  # 10 seconds
+            refresh_interval=30000  # 30 seconds
         )
         self.usage_bar.pack(fill=tk.X, pady=(4, 0))
 
