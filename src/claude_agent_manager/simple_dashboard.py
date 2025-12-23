@@ -3465,7 +3465,9 @@ class AgentDashboard:
             except Exception as e:
                 # Release lock on error
                 self._starting_agents.discard(agent_id)
+                import traceback
                 print(f"Embedded console error: {e}")
+                traceback.print_exc()
                 # Fallback to standard cmd (lock already released)
                 try:
                     manager.start_agent(agent_id)

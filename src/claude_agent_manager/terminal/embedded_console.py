@@ -18,6 +18,7 @@ import threading
 import time
 import os
 import sys
+from pathlib import Path
 from typing import Optional, Callable, Dict
 
 if sys.platform == "win32":
