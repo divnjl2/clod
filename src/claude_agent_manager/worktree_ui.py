@@ -32,6 +32,11 @@ class WorktreeInfo:
     uncommitted_files: int = 0
     last_commit: str = ""
     has_conflicts: bool = False
+    # New fields from Auto-Claude
+    files_changed: int = 0
+    additions: int = 0
+    deletions: int = 0
+    base_branch: str = "main"
 
 
 class WorktreeCard(tk.Frame):
@@ -128,16 +133,35 @@ class WorktreeCard(tk.Frame):
             fg=t["fg_dim"]
         ).pack(side=tk.LEFT)
 
-        # Files changed
-        files_color = t["online"] if wt.uncommitted_files > 0 else t["fg_dim"]
-        files_text = f"{wt.uncommitted_files} file{'s' if wt.uncommitted_files != 1 else ''} changed"
-        tk.Label(
-            status_frame,
-            text=files_text,
-            font=("Consolas", 8),
-            bg=t["card_bg"],
-            fg=files_color
-        ).pack(side=tk.LEFT)
+        # Additions (green)
+        if wt.additions > 0:
+            tk.Label(
+                status_frame,
+                text=f"+{wt.additions}",
+                font=("Consolas", 8),
+                bg=t["card_bg"],
+                fg="#4ade80"  # green
+            ).pack(side=tk.LEFT)
+
+        # Deletions (red)
+        if wt.deletions > 0:
+            tk.Label(
+                status_frame,
+                text=f" -{wt.deletions}",
+                font=("Consolas", 8),
+                bg=t["card_bg"],
+                fg="#ef4444"  # red
+            ).pack(side=tk.LEFT)
+
+        # Uncommitted indicator
+        if wt.uncommitted_files > 0:
+            tk.Label(
+                status_frame,
+                text=f"  ({wt.uncommitted_files} uncommitted)",
+                font=("Consolas", 8),
+                bg=t["card_bg"],
+                fg="#f59e0b"  # orange
+            ).pack(side=tk.LEFT)
 
         # Actions row
         actions_frame = tk.Frame(self, bg=t["card_bg"])
@@ -461,7 +485,10 @@ class WorktreePanel(tk.Frame):
                         task_name=task_name,
                         commits_ahead=status.get("commits_ahead", 0),
                         uncommitted_files=status.get("uncommitted_files", 0),
-                        last_commit=status.get("last_commit", "")
+                        last_commit=status.get("last_commit", ""),
+                        files_changed=status.get("files_changed", 0),
+                        additions=status.get("additions", 0),
+                        deletions=status.get("deletions", 0),
                     ))
                 else:
                     i += 1
@@ -473,10 +500,15 @@ class WorktreePanel(tk.Frame):
 
     def _get_worktree_status(self, path: Path) -> Dict:
         """Get status for a specific worktree."""
+        import re
+
         status = {
             "commits_ahead": 0,
             "uncommitted_files": 0,
-            "last_commit": ""
+            "last_commit": "",
+            "files_changed": 0,
+            "additions": 0,
+            "deletions": 0,
         }
 
         try:
@@ -512,6 +544,26 @@ class WorktreePanel(tk.Frame):
             )
             if result.returncode == 0:
                 status["last_commit"] = result.stdout.strip()[:50]
+
+            # Diff stats (additions/deletions/files)
+            result = subprocess.run(
+                ["git", "diff", "--shortstat", "main...HEAD"],
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=3
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # Parse: "3 files changed, 50 insertions(+), 10 deletions(-)"
+                match = re.search(r"(\d+) files? changed", result.stdout)
+                if match:
+                    status["files_changed"] = int(match.group(1))
+                match = re.search(r"(\d+) insertions?", result.stdout)
+                if match:
+                    status["additions"] = int(match.group(1))
+                match = re.search(r"(\d+) deletions?", result.stdout)
+                if match:
+                    status["deletions"] = int(match.group(1))
 
         except Exception:
             pass
