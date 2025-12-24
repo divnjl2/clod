@@ -72,6 +72,19 @@ except ImportError:
 HAS_TERMINAL = False
 TerminalWidget = None
 
+# Import worktree UI components
+try:
+    from .worktree_ui import (
+        WorktreePanel, WorktreeInfo,
+        CreateWorktreeDialog, MergeConfirmDialog, DiscardConfirmDialog
+    )
+    from .worktree_manager import WorktreeManager
+    HAS_WORKTREE_UI = True
+except ImportError:
+    HAS_WORKTREE_UI = False
+    WorktreePanel = None
+    WorktreeManager = None
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WINDOWS TITLE BAR COLOR
@@ -2195,6 +2208,24 @@ class AgentDashboard:
         self.agents_frame.pack(fill=tk.BOTH, expand=True)
         self.agents_frame.grid_propagate(False)
 
+        # Worktree panel (below agent cards)
+        self.worktree_panel = None
+        if HAS_WORKTREE_UI and WorktreePanel:
+            # Separator before worktrees
+            self.worktree_sep = tk.Frame(self.card, bg=t["separator"], height=1)
+            self.worktree_sep.pack(fill=tk.X, pady=(4, 4))
+
+            self.worktree_panel = WorktreePanel(
+                self.card,
+                theme=t,
+                project_path=self._get_active_project_path(),
+                on_merge=self._handle_worktree_merge,
+                on_discard=self._handle_worktree_discard,
+                on_create=self._handle_worktree_create,
+                refresh_interval=5000
+            )
+            self.worktree_panel.pack(fill=tk.X, pady=(0, 4))
+
         # Footer with settings gear (bottom right, same vertical as toggle)
         self.footer = tk.Frame(self.card, bg=t["card_bg"])
         self.footer.pack(fill=tk.X, pady=(4, 0))
@@ -2416,6 +2447,104 @@ class AgentDashboard:
 
         dialog.bind("<Escape>", lambda e: dialog.destroy())
 
+    # ───────────────────────────────────────────────────────────────────────────
+    # WORKTREE HANDLERS
+    # ───────────────────────────────────────────────────────────────────────────
+
+    def _get_active_project_path(self) -> Path:
+        """Get project path from first agent or None."""
+        if self.agents_data:
+            for agent in self.agents_data:
+                project = agent.get("project_path")
+                if project:
+                    return Path(project)
+        return None
+
+    def _handle_worktree_merge(self, wt):
+        """Show merge confirmation dialog."""
+        if not HAS_WORKTREE_UI:
+            return
+
+        def on_confirm(worktree, squash):
+            project_path = self._get_active_project_path()
+            if not project_path:
+                return
+
+            try:
+                wm = WorktreeManager(project_path)
+                success = wm.merge_worktree(
+                    worktree.path,
+                    target_branch="main",
+                    delete_after=True,
+                    squash=squash
+                )
+                if success:
+                    self._show_notification("Merge successful", "green")
+                else:
+                    self._show_notification("Merge failed - check for conflicts", "red")
+            except Exception as e:
+                self._show_notification(f"Error: {str(e)[:50]}", "red")
+
+        MergeConfirmDialog(self.root, self.theme, wt, on_confirm)
+
+    def _handle_worktree_discard(self, wt):
+        """Show discard confirmation dialog."""
+        if not HAS_WORKTREE_UI:
+            return
+
+        def on_confirm(worktree):
+            project_path = self._get_active_project_path()
+            if not project_path:
+                return
+
+            try:
+                wm = WorktreeManager(project_path)
+                wm.discard_worktree(worktree.path, force=True)
+                self._show_notification("Worktree discarded", "orange")
+            except Exception as e:
+                self._show_notification(f"Error: {str(e)[:50]}", "red")
+
+        DiscardConfirmDialog(self.root, self.theme, wt, on_confirm)
+
+    def _handle_worktree_create(self):
+        """Show create worktree dialog."""
+        if not HAS_WORKTREE_UI:
+            return
+
+        def on_create(agent_id, task_name):
+            project_path = self._get_active_project_path()
+            if not project_path:
+                self._show_notification("No project path configured", "red")
+                return
+
+            try:
+                wm = WorktreeManager(project_path)
+                wm.create_task_worktree(agent_id, task_name)
+                self._show_notification(f"Created worktree: {task_name}", "green")
+            except Exception as e:
+                self._show_notification(f"Error: {str(e)[:50]}", "red")
+
+        CreateWorktreeDialog(self.root, self.theme, self.agents_data, on_create)
+
+    def _show_notification(self, message: str, color: str = "accent"):
+        """Show temporary notification in title area."""
+        original_text = self.title_lbl.cget("text")
+        original_fg = self.title_lbl.cget("fg")
+
+        color_map = {
+            "green": "#4ade80",
+            "red": "#ef4444",
+            "orange": "#f59e0b",
+            "accent": self.theme["accent"]
+        }
+
+        self.title_lbl.configure(text=message, fg=color_map.get(color, color))
+
+        def restore():
+            self.title_lbl.configure(text=original_text, fg=original_fg)
+
+        self.root.after(3000, restore)
+
     def _apply_theme(self):
         """Apply theme colors to all widgets without re-rendering."""
         t = self.theme
@@ -2438,6 +2567,12 @@ class AgentDashboard:
 
         # Update usage bar
         self.usage_bar.update_theme(t)
+
+        # Update worktree panel
+        if self.worktree_panel:
+            self.worktree_panel.update_theme(t)
+            if hasattr(self, 'worktree_sep'):
+                self.worktree_sep.configure(bg=t["separator"])
 
         # Update existing cards
         for card in self.agent_cards:
@@ -2557,6 +2692,12 @@ class AgentDashboard:
 
         self.agents_data = new_data
         self._render()
+
+        # Update worktree panel project path
+        if self.worktree_panel:
+            project_path = self._get_active_project_path()
+            if project_path:
+                self.worktree_panel.set_project_path(project_path)
 
     def _data_equals(self, old: List[Dict], new: List[Dict]) -> bool:
         """Compare agent data lists."""
