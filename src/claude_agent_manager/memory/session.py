@@ -159,21 +159,64 @@ class SessionMemory:
     def _save_to_graph(self, insights: SessionInsights) -> bool:
         """Save insights to graph memory."""
         try:
-            from .graph_memory import GraphMemory
+            from .graph_memory import GraphMemory, NodeType, RelationType
 
             if self._graph_memory is None:
-                self._graph_memory = GraphMemory(self.base_dir)
+                self._graph_memory = GraphMemory(agent_id=self.agent_id)
 
-            # Store as a memory node
-            self._graph_memory.store_memory(
-                content=f"Session {insights.session_number}: {json.dumps(insights.to_dict())}",
+            # Store session as a node
+            session_node = self._graph_memory.store(
+                content=f"Session {insights.session_number}: {len(insights.subtasks_completed)} subtasks completed",
+                node_type=NodeType.TASK,
+                importance=0.7,
                 metadata={
-                    "type": "session_insights",
                     "session_number": insights.session_number,
-                    "agent_id": insights.agent_id,
+                    "subtasks_completed": insights.subtasks_completed,
+                    "what_worked": insights.what_worked,
+                    "what_failed": insights.what_failed,
                 },
-                category="session",
             )
+
+            # Store patterns as separate nodes
+            for pattern in insights.patterns_found:
+                pattern_node = self._graph_memory.store(
+                    content=pattern,
+                    node_type=NodeType.PATTERN,
+                    importance=0.8,
+                )
+                # Relate pattern to session
+                self._graph_memory.relate(
+                    session_node.id,
+                    RelationType.CONTAINS,
+                    pattern_node.id,
+                )
+
+            # Store gotchas as error nodes
+            for gotcha in insights.gotchas_encountered:
+                gotcha_node = self._graph_memory.store(
+                    content=gotcha,
+                    node_type=NodeType.ERROR,
+                    importance=0.9,  # High importance - don't repeat mistakes
+                )
+                self._graph_memory.relate(
+                    session_node.id,
+                    RelationType.CAUSED_BY,
+                    gotcha_node.id,
+                )
+
+            # Store recommendations as facts
+            for rec in insights.recommendations_for_next_session:
+                rec_node = self._graph_memory.store(
+                    content=rec,
+                    node_type=NodeType.FACT,
+                    importance=0.75,
+                )
+                self._graph_memory.relate(
+                    session_node.id,
+                    RelationType.RELATED_TO,
+                    rec_node.id,
+                )
+
             return True
         except ImportError:
             logger.debug("Graph memory not available")
