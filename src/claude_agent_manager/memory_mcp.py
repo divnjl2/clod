@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from memory.graph_memory import GraphMemory, NodeType, RelationType, MemoryNode
 from memory.session import SessionMemory, SessionInsights
+from memory.claude_mem_bridge import ClaudeMemBridge
 
 
 # ============================================================================
@@ -323,6 +324,87 @@ def tool_memory_stats(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================================
+# CLAUDE-MEM BRIDGE HANDLERS
+# ============================================================================
+
+_bridge: Optional[ClaudeMemBridge] = None
+
+
+def get_bridge() -> ClaudeMemBridge:
+    global _bridge
+    if _bridge is None:
+        _bridge = ClaudeMemBridge(
+            agent_id=AGENT_ID,
+            graph_memory=get_graph_memory(),
+        )
+    return _bridge
+
+
+def tool_sync_claude_mem(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Sync observations from claude-mem to GraphMemory."""
+    limit = params.get("limit", 100)
+    project = params.get("project")
+
+    try:
+        bridge = get_bridge()
+        stats = bridge.sync_from_claude_mem(limit=limit, project=project)
+
+        return {
+            "success": True,
+            "observations_synced": stats.observations_synced,
+            "nodes_created": stats.nodes_created,
+            "relations_created": stats.relations_created,
+            "errors": stats.errors,
+            "skipped": stats.skipped,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def tool_unified_search(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Search across both claude-mem and GraphMemory."""
+    query = params.get("query", "")
+    limit = params.get("limit", 10)
+    include_claude_mem = params.get("include_claude_mem", True)
+    include_graph_memory = params.get("include_graph_memory", True)
+
+    if not query:
+        return {"success": False, "error": "Query is required"}
+
+    try:
+        bridge = get_bridge()
+        context = bridge.get_unified_context(
+            query=query,
+            include_claude_mem=include_claude_mem,
+            include_graph_memory=include_graph_memory,
+            limit=limit,
+        )
+
+        return {
+            "success": True,
+            "query": query,
+            "graph_memory_results": len(context["graph_memory"]),
+            "claude_mem_results": len(context["claude_mem"]),
+            "results": {
+                "graph_memory": context["graph_memory"],
+                "claude_mem": context["claude_mem"],
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def tool_bridge_stats(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Get bridge statistics."""
+    try:
+        bridge = get_bridge()
+        stats = bridge.get_stats()
+        return {"success": True, **stats}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
 # TOOLS REGISTRY
 # ============================================================================
 
@@ -410,6 +492,37 @@ TOOLS = {
         "description": "Get memory statistics",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": tool_memory_stats
+    },
+    # Claude-Mem Bridge tools
+    "sync_claude_mem": {
+        "description": "Sync observations from claude-mem to GraphMemory",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max observations to sync (default 100)"},
+                "project": {"type": "string", "description": "Filter by project name"}
+            }
+        },
+        "handler": tool_sync_claude_mem
+    },
+    "unified_search": {
+        "description": "Search across both claude-mem history and GraphMemory knowledge",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "description": "Max results per source"},
+                "include_claude_mem": {"type": "boolean", "description": "Include claude-mem results"},
+                "include_graph_memory": {"type": "boolean", "description": "Include GraphMemory results"}
+            },
+            "required": ["query"]
+        },
+        "handler": tool_unified_search
+    },
+    "bridge_stats": {
+        "description": "Get claude-mem bridge statistics",
+        "inputSchema": {"type": "object", "properties": {}},
+        "handler": tool_bridge_stats
     }
 }
 
