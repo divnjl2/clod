@@ -661,6 +661,250 @@ def memory_verify() -> None:
     verify_isolation_live(agents, agent_root)
 
 
+@app.command("claude-mem-setup")
+def claude_mem_setup(
+    start_worker: bool = typer.Option(True, "--start/--no-start", help="Запустить worker"),
+) -> None:
+    """Настройка и запуск claude-mem (автоустановка Bun + worker)."""
+    from .claude_mem_setup import (
+        diagnose_claude_mem, install_bun, start_worker as do_start_worker,
+        is_worker_running, get_worker_port,
+    )
+    console.print("[bold]Claude-mem Setup[/bold]\n")
+    diag = diagnose_claude_mem()
+    if not diag["plugin_installed"]:
+        console.print("[red]Plugin not installed. Run: /plugin install claude-mem[/red]")
+        raise typer.Exit(1)
+    console.print("[green]✓[/green] Plugin installed")
+    if not diag["bun_installed"]:
+        console.print("[yellow]○[/yellow] Installing Bun...")
+        if not install_bun(silent=False):
+            raise typer.Exit(1)
+    console.print(f"[green]✓[/green] Bun installed")
+    if start_worker and not is_worker_running():
+        console.print("[yellow]○[/yellow] Starting worker...")
+        if not do_start_worker(silent=False):
+            raise typer.Exit(1)
+    console.print(f"[green]✓[/green] Worker running on port {get_worker_port()}")
+    console.print("[bold green]Setup complete![/bold green]")
+
+
+@app.command("claude-mem-test")
+def claude_mem_test(no_cleanup: bool = typer.Option(False, "--no-cleanup")) -> None:
+    """Синтетический тест claude-mem."""
+    from .claude_mem_test import run_synthetic_test, run_and_cleanup
+    console.print("[bold]Claude-mem Synthetic Test[/bold]")
+    results = run_synthetic_test(verbose=True) if no_cleanup else run_and_cleanup(verbose=True)
+    if results["success"]:
+        console.print("[bold green]TEST PASSED[/bold green]")
+    else:
+        console.print("[bold red]TEST FAILED[/bold red]")
+        raise typer.Exit(1)
+
+
+@app.command("claude-mem-status")
+def claude_mem_status() -> None:
+    """Статус claude-mem системы."""
+    from .claude_mem_setup import diagnose_claude_mem, get_worker_stats
+    diag = diagnose_claude_mem()
+    console.print("[bold]Claude-mem Status[/bold]")
+    ok = lambda x: "[green]✓[/green]" if x else "[red]✗[/red]"
+    console.print(f"{ok(diag['plugin_installed'])} Plugin | {ok(diag['bun_installed'])} Bun | {ok(diag['worker_running'])} Worker (:{diag['worker_port']})")
+    if diag["worker_running"]:
+        stats = get_worker_stats()
+        if stats and "database" in stats:
+            db = stats["database"]
+            console.print(f"Observations: {db.get('observations', 0)} | Sessions: {db.get('sessions', 0)} | DB: {db.get('size', 0)//1024}KB")
+    health = "[green]HEALTHY[/green]" if diag["healthy"] else "[red]UNHEALTHY[/red]"
+    console.print(f"Overall: {health}")
+
+
+@app.command("claude-mem-sync")
+def claude_mem_sync(
+    agent_id: str = typer.Option("default", "--agent", "-a", help="Agent ID for graph memory"),
+    project: str = typer.Option(None, "--project", "-p", help="Filter by project"),
+    limit: int = typer.Option(500, "--limit", "-l", help="Max observations to sync"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+) -> None:
+    """Sync claude-mem observations to GraphMemory (graph layer)."""
+    from .memory.claude_mem_bridge import ClaudeMemBridge
+
+    console.print("[bold]Claude-mem -> GraphMemory Sync[/bold]\n")
+
+    bridge = ClaudeMemBridge(agent_id=agent_id)
+
+    # Check claude-mem DB
+    if not bridge.claude_mem_db or not bridge.claude_mem_db.exists():
+        console.print("[red]Claude-mem database not found[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[cyan]Source:[/cyan] {bridge.claude_mem_db}")
+    console.print(f"[cyan]Target:[/cyan] GraphMemory (agent_id={agent_id})")
+
+    if project:
+        console.print(f"[cyan]Filter:[/cyan] project={project}")
+
+    # Get stats before sync
+    pre_stats = bridge.get_stats()
+    cm_obs = pre_stats.get("claude_mem", {}).get("total_observations", 0)
+    gm_nodes = pre_stats.get("graph_memory", {}).get("total_nodes", 0)
+
+    console.print(f"\n[yellow]Before sync:[/yellow] {cm_obs} observations -> {gm_nodes} graph nodes")
+
+    # Do sync
+    console.print("\n[yellow]Syncing...[/yellow]")
+    stats = bridge.sync_from_claude_mem(limit=limit, project=project)
+
+    # Show results
+    console.print(f"\n[bold]Sync Results:[/bold]")
+    console.print(f"  Observations synced: {stats.observations_synced}")
+    console.print(f"  Nodes created: {stats.nodes_created}")
+    console.print(f"  Relations created: {stats.relations_created}")
+    console.print(f"  Skipped (already synced): {stats.skipped}")
+    console.print(f"  Errors: {stats.errors}")
+
+    # Get stats after sync
+    post_stats = bridge.get_stats()
+    gm_nodes_after = post_stats.get("graph_memory", {}).get("total_nodes", 0)
+    console.print(f"\n[green]After sync:[/green] {gm_nodes_after} graph nodes total")
+
+    if verbose:
+        # Show sample nodes
+        nodes = bridge.graph_memory.query(limit=5)
+        if nodes:
+            console.print("\n[bold]Recent graph nodes:[/bold]")
+            for n in nodes:
+                console.print(f"  [{n.node_type.value}] {n.content[:60]}...")
+
+    bridge.close()
+    console.print("\n[bold green]Sync complete![/bold green]")
+
+
+@app.command("memory-promote")
+def memory_promote(
+    node_id: str = typer.Argument(..., help="Node ID to promote to shared memory"),
+    agent_id: str = typer.Option("default", "--agent", "-a", help="Source agent ID"),
+    boost: float = typer.Option(0.1, "--boost", "-b", help="Importance boost on promote"),
+) -> None:
+    """Promote a node from agent memory to shared (project-wide) memory."""
+    from .memory.graph_memory import GraphMemory
+
+    console.print(f"[bold]Promoting node to shared memory[/bold]")
+
+    graph = GraphMemory(agent_id=agent_id)
+
+    # First show the node
+    node = graph.get(node_id)
+    if not node:
+        console.print(f"[red]Node not found: {node_id}[/red]")
+        console.print(f"[dim]Looking in agent_id={agent_id}[/dim]")
+        graph.close()
+        raise typer.Exit(1)
+
+    console.print(f"[cyan]Node:[/cyan] [{node.node_type.value}] {node.content[:80]}...")
+    console.print(f"[cyan]Current importance:[/cyan] {node.importance}")
+
+    # Promote
+    success = graph.promote_to_shared(node_id, boost_importance=boost)
+
+    if success:
+        new_importance = min(1.0, node.importance + boost)
+        console.print(f"[green]Promoted to shared memory[/green]")
+        console.print(f"[cyan]New importance:[/cyan] {new_importance}")
+    else:
+        console.print(f"[red]Failed to promote node[/red]")
+
+    graph.close()
+
+
+@app.command("memory-demote")
+def memory_demote(
+    node_id: str = typer.Argument(..., help="Node ID to demote from shared memory"),
+    target_agent: str = typer.Option("default", "--agent", "-a", help="Target agent ID"),
+) -> None:
+    """Demote a node from shared memory back to agent-specific memory."""
+    from .memory.graph_memory import GraphMemory, SHARED_AGENT_ID
+
+    console.print(f"[bold]Demoting node from shared memory[/bold]")
+
+    # Use shared agent to access shared nodes
+    graph = GraphMemory(agent_id=target_agent)
+
+    success = graph.demote_from_shared(node_id, target_agent_id=target_agent)
+
+    if success:
+        console.print(f"[green]Demoted to agent {target_agent}[/green]")
+    else:
+        console.print(f"[red]Node not found in shared memory: {node_id}[/red]")
+
+    graph.close()
+
+
+@app.command("memory-shared")
+def memory_shared(
+    search: str = typer.Option(None, "--search", "-s", help="Search term"),
+    limit: int = typer.Option(50, "--limit", "-l", help="Max results"),
+) -> None:
+    """List all shared (project-wide) memory nodes."""
+    from .memory.graph_memory import GraphMemory, SHARED_AGENT_ID
+
+    console.print("[bold]Shared Memory (Project-wide)[/bold]\n")
+
+    # Create graph with any agent_id to query shared
+    graph = GraphMemory(agent_id="viewer")
+    nodes = graph.query_shared_only(search_term=search, limit=limit)
+
+    if not nodes:
+        console.print("[yellow]No shared memory nodes found[/yellow]")
+        graph.close()
+        return
+
+    console.print(f"[cyan]Total shared nodes:[/cyan] {len(nodes)}\n")
+
+    for node in nodes:
+        imp = f"[{'green' if node.importance >= 0.7 else 'yellow' if node.importance >= 0.4 else 'dim'}]{node.importance:.2f}[/]"
+        console.print(f"  {imp} [{node.node_type.value}] {node.id[:8]} | {node.content[:60]}...")
+
+    graph.close()
+
+
+@app.command("memory-stats")
+def memory_stats(
+    agent_id: str = typer.Option("default", "--agent", "-a", help="Agent ID"),
+) -> None:
+    """Show memory statistics including shared memory."""
+    from .memory.graph_memory import GraphMemory
+
+    graph = GraphMemory(agent_id=agent_id)
+    stats = graph.get_stats()
+
+    console.print(f"[bold]Memory Stats for agent: {agent_id}[/bold]\n")
+
+    # Agent's own memory
+    console.print("[cyan]Agent Memory:[/cyan]")
+    console.print(f"  Nodes: {stats['total_nodes']}")
+    console.print(f"  Relations: {stats['total_relations']}")
+    if stats['nodes_by_type']:
+        types_str = ", ".join(f"{t}={c}" for t, c in stats['nodes_by_type'].items())
+        console.print(f"  By type: {types_str}")
+
+    # Shared memory
+    shared = stats.get('shared', {})
+    console.print("\n[cyan]Shared Memory (project-wide):[/cyan]")
+    console.print(f"  Nodes: {shared.get('total_nodes', 0)}")
+    console.print(f"  Relations: {shared.get('total_relations', 0)}")
+    if shared.get('nodes_by_type'):
+        types_str = ", ".join(f"{t}={c}" for t, c in shared['nodes_by_type'].items())
+        console.print(f"  By type: {types_str}")
+
+    # Combined
+    total = stats['total_nodes'] + shared.get('total_nodes', 0)
+    console.print(f"\n[green]Total accessible:[/green] {total} nodes")
+    console.print(f"[dim]DB: {stats['db_path']}[/dim]")
+
+    graph.close()
+
+
 # ==============================================================================
 # Git Worktrees Commands
 # ==============================================================================

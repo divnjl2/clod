@@ -36,6 +36,9 @@ from rich.table import Table
 
 console = Console()
 
+# Special agent_id for shared/project-wide memory
+SHARED_AGENT_ID = "shared"
+
 
 class NodeType(Enum):
     """Типы узлов в графе памяти."""
@@ -321,7 +324,8 @@ class GraphMemory:
         search_term: Optional[str] = None,
         node_type: Optional[NodeType] = None,
         min_importance: float = 0.0,
-        limit: int = 100
+        limit: int = 100,
+        include_shared: bool = True
     ) -> List[MemoryNode]:
         """
         Query nodes.
@@ -331,12 +335,18 @@ class GraphMemory:
             node_type: фильтр по типу
             min_importance: минимальная важность
             limit: максимальное количество результатов
+            include_shared: включить общую память (agent_id='shared')
 
         Returns:
             Список MemoryNode
         """
-        query = "SELECT * FROM nodes WHERE agent_id = ?"
-        params: List[Any] = [self.agent_id]
+        # Build agent filter - own memory + optionally shared
+        if include_shared and self.agent_id != SHARED_AGENT_ID:
+            query = "SELECT * FROM nodes WHERE agent_id IN (?, ?)"
+            params: List[Any] = [self.agent_id, SHARED_AGENT_ID]
+        else:
+            query = "SELECT * FROM nodes WHERE agent_id = ?"
+            params: List[Any] = [self.agent_id]
 
         if search_term:
             query += " AND content LIKE ?"
@@ -532,13 +542,145 @@ class GraphMemory:
 
         return cursor.rowcount > 0
 
+    def promote_to_shared(
+        self,
+        node_id: str,
+        boost_importance: float = 0.1
+    ) -> bool:
+        """
+        Promote a node to shared memory (visible to all agents).
+
+        Args:
+            node_id: ID узла для промоута
+            boost_importance: увеличение важности при промоуте
+
+        Returns:
+            True если успешно
+        """
+        # Get current node
+        cursor = self.conn.execute(
+            "SELECT * FROM nodes WHERE id = ? AND agent_id = ?",
+            (node_id, self.agent_id)
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            return False
+
+        # Calculate new importance (capped at 1.0)
+        new_importance = min(1.0, row["importance"] + boost_importance)
+
+        # Update agent_id to shared
+        self.conn.execute("""
+            UPDATE nodes
+            SET agent_id = ?, importance = ?
+            WHERE id = ? AND agent_id = ?
+        """, (SHARED_AGENT_ID, new_importance, node_id, self.agent_id))
+
+        # Also update relations
+        self.conn.execute("""
+            UPDATE relations
+            SET agent_id = ?
+            WHERE (source_id = ? OR target_id = ?) AND agent_id = ?
+        """, (SHARED_AGENT_ID, node_id, node_id, self.agent_id))
+
+        self.conn.commit()
+        return True
+
+    def demote_from_shared(
+        self,
+        node_id: str,
+        target_agent_id: Optional[str] = None
+    ) -> bool:
+        """
+        Demote a node from shared memory to agent-specific memory.
+
+        Args:
+            node_id: ID узла
+            target_agent_id: целевой агент (по умолчанию - текущий)
+
+        Returns:
+            True если успешно
+        """
+        target = target_agent_id or self.agent_id
+
+        # Check node exists in shared
+        cursor = self.conn.execute(
+            "SELECT * FROM nodes WHERE id = ? AND agent_id = ?",
+            (node_id, SHARED_AGENT_ID)
+        )
+        if not cursor.fetchone():
+            return False
+
+        # Move to target agent
+        self.conn.execute("""
+            UPDATE nodes SET agent_id = ? WHERE id = ? AND agent_id = ?
+        """, (target, node_id, SHARED_AGENT_ID))
+
+        self.conn.execute("""
+            UPDATE relations SET agent_id = ?
+            WHERE (source_id = ? OR target_id = ?) AND agent_id = ?
+        """, (target, node_id, node_id, SHARED_AGENT_ID))
+
+        self.conn.commit()
+        return True
+
+    def query_shared_only(
+        self,
+        search_term: Optional[str] = None,
+        node_type: Optional[NodeType] = None,
+        limit: int = 100
+    ) -> List[MemoryNode]:
+        """
+        Query only shared memory nodes.
+
+        Args:
+            search_term: поисковый запрос
+            node_type: фильтр по типу
+            limit: максимум результатов
+
+        Returns:
+            Список shared MemoryNode
+        """
+        query = "SELECT * FROM nodes WHERE agent_id = ?"
+        params: List[Any] = [SHARED_AGENT_ID]
+
+        if search_term:
+            query += " AND content LIKE ?"
+            params.append(f"%{search_term}%")
+
+        if node_type:
+            query += " AND node_type = ?"
+            params.append(node_type.value)
+
+        query += " ORDER BY importance DESC, access_count DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = self.conn.execute(query, params)
+        nodes = []
+
+        for row in cursor.fetchall():
+            nodes.append(MemoryNode(
+                id=row["id"],
+                node_type=NodeType(row["node_type"]),
+                content=row["content"],
+                metadata=json.loads(row["metadata"]),
+                importance=row["importance"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                accessed_at=datetime.fromisoformat(row["accessed_at"]),
+                access_count=row["access_count"]
+            ))
+
+        return nodes
+
     def get_stats(self) -> Dict[str, Any]:
         """
         Get memory statistics.
 
         Returns:
-            Dictionary with stats
+            Dictionary with stats (includes shared memory info)
         """
+        # Agent's own nodes
         node_count = self.conn.execute(
             "SELECT COUNT(*) FROM nodes WHERE agent_id = ?",
             (self.agent_id,)
@@ -557,11 +699,35 @@ class GraphMemory:
         for row in cursor.fetchall():
             type_counts[row[0]] = row[1]
 
+        # Shared nodes
+        shared_node_count = self.conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE agent_id = ?",
+            (SHARED_AGENT_ID,)
+        ).fetchone()[0]
+
+        shared_relation_count = self.conn.execute(
+            "SELECT COUNT(*) FROM relations WHERE agent_id = ?",
+            (SHARED_AGENT_ID,)
+        ).fetchone()[0]
+
+        shared_type_counts = {}
+        cursor = self.conn.execute(
+            "SELECT node_type, COUNT(*) FROM nodes WHERE agent_id = ? GROUP BY node_type",
+            (SHARED_AGENT_ID,)
+        )
+        for row in cursor.fetchall():
+            shared_type_counts[row[0]] = row[1]
+
         return {
             "agent_id": self.agent_id,
             "total_nodes": node_count,
             "total_relations": relation_count,
             "nodes_by_type": type_counts,
+            "shared": {
+                "total_nodes": shared_node_count,
+                "total_relations": shared_relation_count,
+                "nodes_by_type": shared_type_counts,
+            },
             "db_path": str(self.db_path)
         }
 

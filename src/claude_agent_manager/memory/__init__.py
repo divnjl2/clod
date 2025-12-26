@@ -12,7 +12,7 @@ Components:
 - ClaudeMemBridge: Bridge between claude-mem and GraphMemory
 """
 
-from .graph_memory import GraphMemory, MemoryNode, MemoryRelation, NodeType, RelationType
+from .graph_memory import GraphMemory, MemoryNode, MemoryRelation, NodeType, RelationType, SHARED_AGENT_ID
 from .session import (
     SessionMemory,
     SessionInsights,
@@ -28,6 +28,7 @@ __all__ = [
     "MemoryRelation",
     "NodeType",
     "RelationType",
+    "SHARED_AGENT_ID",
     # Session Memory
     "SessionMemory",
     "SessionInsights",
