@@ -71,6 +71,18 @@ hiddenimports = [
     'claude_agent_manager.monitoring',
     'claude_agent_manager.overlay',
     'claude_agent_manager.cli',
+    # Core modules (required by manager.py)
+    'claude_agent_manager.core',
+    'claude_agent_manager.core.paths',
+    'claude_agent_manager.core.locks',
+    'claude_agent_manager.core.models',
+    'claude_agent_manager.core.registry',
+    'claude_agent_manager.core.runner_env',
+    # Memory modules
+    'claude_agent_manager.memory',
+    'claude_agent_manager.memory.graph_memory',
+    'claude_agent_manager.memory.session',
+    'claude_agent_manager.memory.claude_mem_bridge',
     'pydantic',
     'psutil',
     'typer',
@@ -127,7 +139,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # GUI app, no console
+    console=False,  # No debug console
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

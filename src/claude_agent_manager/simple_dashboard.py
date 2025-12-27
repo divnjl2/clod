@@ -12,6 +12,26 @@ import tkinter as tk
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Callable
 
+# PIL for anti-aliased graphics
+try:
+    from PIL import Image, ImageDraw, ImageTk
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+    Image = ImageDraw = ImageTk = None
+
+# Detect if running in PyInstaller bundle
+_FROZEN = getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+
+
+def get_asset_path(filename: str) -> Path:
+    """Get path to asset file, works both in dev and PyInstaller builds."""
+    # PyInstaller stores assets in _MEIPASS temp directory
+    if hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS) / "assets" / filename
+    # Dev mode - assets are in project root
+    return Path(__file__).parent.parent.parent / "assets" / filename
+
 
 def get_app_data_dir() -> Path:
     """Get platform-specific app data directory."""
@@ -34,24 +54,50 @@ def ensure_app_dirs() -> Path:
 
     return app_dir
 
-# Import real agent manager if available
-try:
-    from . import manager
-    from .config import load_config
-    from .processes import pm2_status, pm2_restart, which
-    from . import agent_config as ac
-    from .registry import AgentConfigOptions
-    HAS_BACKEND = True
-except ImportError:
-    HAS_BACKEND = False
-    ac = None
-    AgentConfigOptions = None
-    manager = None
-    which = None
+# Import real agent manager - use absolute imports for PyInstaller compatibility
+def _import_backend():
+    """Import backend modules, handling both package and frozen contexts."""
+    global manager, load_config, pm2_status, pm2_restart, which, ac, AgentConfigOptions
+
+    try:
+        # Try absolute imports first (works in PyInstaller)
+        import claude_agent_manager.manager as manager
+        from claude_agent_manager.config import load_config
+        from claude_agent_manager.processes import pm2_status, pm2_restart, which
+        import claude_agent_manager.agent_config as ac
+        from claude_agent_manager.registry import AgentConfigOptions
+        return True
+    except ImportError:
+        try:
+            # Fallback to relative imports (works in dev)
+            from . import manager as manager
+            from .config import load_config
+            from .processes import pm2_status, pm2_restart, which
+            from . import agent_config as ac
+            from claude_agent_manager.registry import AgentConfigOptions
+            return True
+        except ImportError as e:
+            print(f"[STARTUP] Backend import failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+# Initialize backend
+manager = None
+load_config = None
+pm2_status = None
+pm2_restart = None
+which = None
+ac = None
+AgentConfigOptions = None
+
+HAS_BACKEND = _import_backend()
+if HAS_BACKEND:
+    print("[STARTUP] Backend imports successful")
 
 # Import embedded console (optional, graceful fallback)
 try:
-    from .terminal.embedded_console import EmbeddedConsole, create_agent_window
+    from claude_agent_manager.terminal.embedded_console import EmbeddedConsole, create_agent_window
     HAS_EMBEDDED_CONSOLE = True
 except ImportError:
     HAS_EMBEDDED_CONSOLE = False
@@ -60,8 +106,8 @@ except ImportError:
 
 # Import tiling and hotkey support
 try:
-    from .tile import tile_windows, get_primary_monitor_work_area
-    from .hotkeys import get_hotkey_manager, parse_hotkey_string
+    from claude_agent_manager.tile import tile_windows, get_primary_monitor_work_area
+    from claude_agent_manager.hotkeys import get_hotkey_manager, parse_hotkey_string
     HAS_TILING = True
 except ImportError:
     HAS_TILING = False
@@ -74,16 +120,25 @@ TerminalWidget = None
 
 # Import worktree UI components
 try:
-    from .worktree_ui import (
+    from claude_agent_manager.worktree_ui import (
         WorktreePanel, WorktreeInfo,
         CreateWorktreeDialog, MergeConfirmDialog, DiscardConfirmDialog
     )
-    from .worktree_manager import WorktreeManager
+    from claude_agent_manager.worktree_manager import WorktreeManager
     HAS_WORKTREE_UI = True
 except ImportError:
     HAS_WORKTREE_UI = False
     WorktreePanel = None
     WorktreeManager = None
+
+# Import memory modules for cleanup
+try:
+    from claude_agent_manager.memory import GraphMemory, SessionMemory
+    HAS_MEMORY = True
+except ImportError:
+    HAS_MEMORY = False
+    GraphMemory = None
+    SessionMemory = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -872,6 +927,834 @@ class TerminalPanel(tk.Frame):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# MEMORY PANEL (Graph Memory Viewer)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MemoryPanel(tk.Toplevel):
+    """Memory viewer panel showing graph memory stats and shared knowledge."""
+
+    def __init__(self, parent: tk.Widget, theme: Dict, dashboard: 'AgentDashboard'):
+        super().__init__(parent)
+        self.theme = theme
+        self.dashboard = dashboard
+        self.graph_memory = None
+
+        self.title("Memory Viewer")
+        self.configure(bg=theme["card_bg"])
+        self.geometry("600x500")
+        self.minsize(500, 400)
+
+        # Make it transient to parent
+        self.transient(parent)
+
+        # Set title bar color
+        self.after(50, lambda: set_title_bar_color(self, theme == THEMES["dark"]))
+
+        self._build_ui()
+        self._load_memory_data()
+
+    def _build_ui(self):
+        t = self.theme
+
+        # Header
+        header = tk.Frame(self, bg=t["card_bg"])
+        header.pack(fill=tk.X, padx=12, pady=(10, 8))
+
+        title = tk.Label(
+            header, text="Graph Memory",
+            font=("Segoe UI Semibold", 14),
+            bg=t["card_bg"], fg=t["fg"]
+        )
+        title.pack(side=tk.LEFT)
+
+        # Refresh button
+        refresh_btn = tk.Label(
+            header, text="⟳",
+            font=("Segoe UI", 12),
+            bg=t["card_bg"], fg=t["fg_dim"],
+            cursor="hand2"
+        )
+        refresh_btn.pack(side=tk.RIGHT)
+        refresh_btn.bind("<Button-1>", lambda e: self._load_memory_data())
+        refresh_btn.bind("<Enter>", lambda e: refresh_btn.configure(fg=t["accent"]))
+        refresh_btn.bind("<Leave>", lambda e: refresh_btn.configure(fg=t["fg_dim"]))
+
+        # Separator
+        sep = tk.Frame(self, bg=t["separator"], height=1)
+        sep.pack(fill=tk.X, padx=12, pady=(0, 8))
+
+        # Notebook for tabs
+        self.notebook = tk.Frame(self, bg=t["card_bg"])
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 10))
+
+        # Tab buttons
+        tab_frame = tk.Frame(self.notebook, bg=t["card_bg"])
+        tab_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.tabs = {}
+        self.current_tab = "stats"
+
+        for tab_name, tab_label in [("stats", "Stats"), ("shared", "Shared"), ("search", "Search"), ("graph", "Graph")]:
+            btn = tk.Label(
+                tab_frame, text=tab_label,
+                font=("Segoe UI", 10),
+                bg=t["card_bg"],
+                fg=t["accent"] if tab_name == self.current_tab else t["fg_dim"],
+                cursor="hand2",
+                padx=10, pady=4
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 4))
+            btn.bind("<Button-1>", lambda e, n=tab_name: self._switch_tab(n))
+            self.tabs[tab_name] = btn
+
+        # Content area
+        self.content = tk.Frame(self.notebook, bg=t["card_bg"])
+        self.content.pack(fill=tk.BOTH, expand=True)
+
+        # Create tab content frames
+        self.stats_frame = tk.Frame(self.content, bg=t["card_bg"])
+        self.shared_frame = tk.Frame(self.content, bg=t["card_bg"])
+        self.search_frame = tk.Frame(self.content, bg=t["card_bg"])
+        self.graph_frame = tk.Frame(self.content, bg=t["card_bg"])
+
+        self._build_stats_tab()
+        self._build_shared_tab()
+        self._build_search_tab()
+        self._build_graph_tab()
+
+        # Show initial tab
+        self.stats_frame.pack(fill=tk.BOTH, expand=True)
+
+    def _switch_tab(self, tab_name: str):
+        """Switch to a different tab."""
+        t = self.theme
+        self.current_tab = tab_name
+
+        # Update tab button colors
+        for name, btn in self.tabs.items():
+            btn.configure(fg=t["accent"] if name == tab_name else t["fg_dim"])
+
+        # Hide all frames
+        self.stats_frame.pack_forget()
+        self.shared_frame.pack_forget()
+        self.search_frame.pack_forget()
+        self.graph_frame.pack_forget()
+
+        # Show selected frame
+        if tab_name == "stats":
+            self.stats_frame.pack(fill=tk.BOTH, expand=True)
+        elif tab_name == "shared":
+            self.shared_frame.pack(fill=tk.BOTH, expand=True)
+        elif tab_name == "search":
+            self.search_frame.pack(fill=tk.BOTH, expand=True)
+        elif tab_name == "graph":
+            self.graph_frame.pack(fill=tk.BOTH, expand=True)
+            self._render_graph()
+
+    def _build_stats_tab(self):
+        """Build the stats tab content."""
+        t = self.theme
+
+        # Stats display
+        self.stats_text = tk.Text(
+            self.stats_frame,
+            font=("Consolas", 10),
+            bg=t["card_bg"], fg=t["fg"],
+            relief="flat",
+            state="disabled",
+            wrap="word",
+            padx=8, pady=8
+        )
+        self.stats_text.pack(fill=tk.BOTH, expand=True)
+
+    def _build_shared_tab(self):
+        """Build the shared knowledge tab."""
+        t = self.theme
+
+        # Scrollable list
+        canvas = tk.Canvas(self.shared_frame, bg=t["card_bg"], highlightthickness=0)
+        scrollbar = tk.Scrollbar(self.shared_frame, orient="vertical", command=canvas.yview)
+        self.shared_list = tk.Frame(canvas, bg=t["card_bg"])
+
+        self.shared_list.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=self.shared_list, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Mouse wheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+    def _build_search_tab(self):
+        """Build the search tab."""
+        t = self.theme
+
+        # Search input
+        search_frame = tk.Frame(self.search_frame, bg=t["card_bg"])
+        search_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.search_entry = tk.Entry(
+            search_frame,
+            font=("Segoe UI", 10),
+            bg=t["card_bg"], fg=t["fg"],
+            insertbackground=t["fg"],
+            relief="flat"
+        )
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
+        self.search_entry.bind("<Return>", lambda e: self._do_search())
+
+        search_btn = tk.Label(
+            search_frame, text="Search",
+            font=("Segoe UI", 10),
+            bg=t["accent"], fg="#ffffff",
+            cursor="hand2",
+            padx=12, pady=6
+        )
+        search_btn.pack(side=tk.RIGHT, padx=(8, 0))
+        search_btn.bind("<Button-1>", lambda e: self._do_search())
+
+        # Results area
+        self.search_results = tk.Text(
+            self.search_frame,
+            font=("Consolas", 10),
+            bg=t["card_bg"], fg=t["fg"],
+            relief="flat",
+            wrap="word",
+            padx=8, pady=8
+        )
+        self.search_results.pack(fill=tk.BOTH, expand=True)
+        # Add placeholder
+        self.search_results.insert("1.0", "Enter search term and press Enter or click Search...")
+        self.search_results.configure(state="disabled")
+
+    def _build_graph_tab(self):
+        """Build the graph visualization tab."""
+        import math
+        import random
+
+        t = self.theme
+
+        # Controls frame
+        controls = tk.Frame(self.graph_frame, bg=t["card_bg"])
+        controls.pack(fill=tk.X, pady=(0, 8))
+
+        # Filter by type
+        tk.Label(controls, text="Filter:", font=("Segoe UI", 9),
+                 bg=t["card_bg"], fg=t["fg_dim"]).pack(side=tk.LEFT)
+
+        self.graph_filter = tk.StringVar(value="all")
+        for ftype in ["all", "decision", "error", "pattern", "task", "fact"]:
+            rb = tk.Radiobutton(
+                controls, text=ftype.capitalize(),
+                variable=self.graph_filter, value=ftype,
+                font=("Segoe UI", 8),
+                bg=t["card_bg"], fg=t["fg"],
+                selectcolor=t["card_bg"],
+                activebackground=t["card_bg"],
+                command=self._render_graph
+            )
+            rb.pack(side=tk.LEFT, padx=2)
+
+        # Canvas for graph
+        self.graph_canvas = tk.Canvas(
+            self.graph_frame,
+            bg="#0f172a",  # Slate-900 dark background
+            highlightthickness=1,
+            highlightbackground="#334155"
+        )
+        self.graph_canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Graph state
+        self.graph_nodes = []  # List of {id, x, y, vx, vy, node_data}
+        self.graph_edges = []  # List of {source_idx, target_idx}
+        self.graph_selected = None
+        self.graph_dragging = None  # Node index being dragged
+        self.graph_panning = False  # Panning empty space
+        self.graph_pan_start = (0, 0)  # Mouse start pos for pan
+        self.graph_simulation_running = False
+        self.graph_zoom = 1.0  # Zoom level
+        self.graph_pan_x = 0   # Pan offset X
+        self.graph_pan_y = 0   # Pan offset Y
+
+        # Bind mouse events
+        self.graph_canvas.bind("<Button-1>", self._on_graph_click)
+        self.graph_canvas.bind("<B1-Motion>", self._on_graph_drag)
+        self.graph_canvas.bind("<ButtonRelease-1>", self._on_graph_release)
+        self.graph_canvas.bind("<MouseWheel>", self._on_graph_zoom)  # Windows
+        self.graph_canvas.bind("<Button-4>", self._on_graph_zoom)    # Linux scroll up
+        self.graph_canvas.bind("<Button-5>", self._on_graph_zoom)    # Linux scroll down
+
+        # Info panel at bottom
+        self.graph_info = tk.Label(
+            self.graph_frame,
+            text="Click a node to see details",
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"],
+            anchor="w", padx=8
+        )
+        self.graph_info.pack(fill=tk.X, pady=(4, 0))
+
+    def _render_graph(self):
+        """Render the graph with force-directed layout."""
+        import math
+        import random
+
+        if not self.graph_memory:
+            return
+
+        # Clear canvas
+        self.graph_canvas.delete("all")
+
+        # Get canvas size
+        self.graph_canvas.update_idletasks()
+        width = self.graph_canvas.winfo_width()
+        height = self.graph_canvas.winfo_height()
+        if width < 100 or height < 100:
+            width, height = 500, 350
+
+        # Get filter
+        filter_type = self.graph_filter.get()
+
+        # Load nodes from memory
+        try:
+            if filter_type == "all":
+                nodes = self.graph_memory.query(limit=50, include_shared=True)
+            else:
+                from claude_agent_manager.memory import NodeType
+                type_map = {
+                    "decision": NodeType.DECISION,
+                    "error": NodeType.ERROR,
+                    "pattern": NodeType.PATTERN,
+                    "task": NodeType.TASK,
+                    "fact": NodeType.FACT,
+                }
+                nodes = self.graph_memory.query(
+                    node_type=type_map.get(filter_type),
+                    limit=50,
+                    include_shared=True
+                )
+        except Exception as e:
+            self.graph_info.configure(text=f"Error: {e}")
+            return
+
+        if not nodes:
+            self.graph_canvas.create_text(
+                width // 2, height // 2,
+                text="No memory nodes found.\nUse agents to build knowledge graph.",
+                font=("Segoe UI", 11),
+                fill=self.theme["fg_dim"],
+                justify="center"
+            )
+            return
+
+        # Initialize node positions randomly
+        self.graph_nodes = []
+        node_id_to_idx = {}
+        margin = 80  # Keep nodes away from edges
+        for i, node in enumerate(nodes):
+            self.graph_nodes.append({
+                "id": node.id,
+                "x": random.uniform(margin, width - margin),
+                "y": random.uniform(margin, height - margin),
+                "vx": 0,
+                "vy": 0,
+                "data": node
+            })
+            node_id_to_idx[node.id] = i
+
+        # Get relations
+        self.graph_edges = []
+        for i, node in enumerate(nodes):
+            try:
+                related = self.graph_memory.get_related(node.id, direction="outgoing")
+                for rel_node, rel in related:
+                    if rel_node.id in node_id_to_idx:
+                        self.graph_edges.append({
+                            "source": i,
+                            "target": node_id_to_idx[rel_node.id]
+                        })
+            except:
+                pass
+
+        # Run force simulation
+        self._run_force_simulation(width, height, iterations=300)
+
+        # Draw using unified redraw method
+        self._redraw_graph()
+        self.graph_info.configure(text=f"{len(nodes)} nodes, {len(self.graph_edges)} edges")
+
+    def _run_force_simulation(self, width: int, height: int, iterations: int = 50):
+        """Run force-directed layout simulation (D3.js style)."""
+        import math
+        import random
+
+        if not self.graph_nodes:
+            return
+
+        n_nodes = len(self.graph_nodes)
+        margin = 60
+
+        # Initialize velocities if not present
+        for node in self.graph_nodes:
+            if "vx" not in node:
+                node["vx"] = 0
+                node["vy"] = 0
+
+        # D3-style parameters
+        alpha = 1.0  # "temperature" - decreases over time
+        alpha_decay = 1 - pow(0.001, 1 / iterations)
+        alpha_min = 0.001
+        velocity_decay = 0.6  # friction
+
+        # Force strengths
+        charge_strength = -400  # repulsion (negative = repel)
+        link_strength = 0.3
+        link_distance = 100
+        center_strength = 0.05
+        collision_radius_mult = 1.5  # multiply node radius for collision
+
+        for iteration in range(iterations):
+            # Decay alpha (cooling)
+            alpha = max(alpha_min, alpha * (1 - alpha_decay))
+
+            # === CHARGE FORCE (repulsion between all nodes) ===
+            for i, n1 in enumerate(self.graph_nodes):
+                for j, n2 in enumerate(self.graph_nodes):
+                    if i >= j:
+                        continue
+                    dx = n2["x"] - n1["x"]
+                    dy = n2["y"] - n1["y"]
+                    dist_sq = dx * dx + dy * dy
+                    if dist_sq < 1:
+                        dist_sq = 1
+                    dist = math.sqrt(dist_sq)
+
+                    # Coulomb's law: F = k * q1 * q2 / r^2
+                    force = charge_strength * alpha / dist_sq
+                    fx = force * dx / dist
+                    fy = force * dy / dist
+
+                    n1["vx"] -= fx
+                    n1["vy"] -= fy
+                    n2["vx"] += fx
+                    n2["vy"] += fy
+
+            # === LINK FORCE (attraction along edges) ===
+            for edge in self.graph_edges:
+                n1 = self.graph_nodes[edge["source"]]
+                n2 = self.graph_nodes[edge["target"]]
+                dx = n2["x"] - n1["x"]
+                dy = n2["y"] - n1["y"]
+                dist = math.sqrt(dx * dx + dy * dy) or 1
+
+                # Spring force: F = k * (x - x0)
+                force = (dist - link_distance) * link_strength * alpha
+                fx = force * dx / dist
+                fy = force * dy / dist
+
+                n1["vx"] += fx
+                n1["vy"] += fy
+                n2["vx"] -= fx
+                n2["vy"] -= fy
+
+            # === CENTER FORCE ===
+            cx, cy = width / 2, height / 2
+            for node in self.graph_nodes:
+                node["vx"] += (cx - node["x"]) * center_strength * alpha
+                node["vy"] += (cy - node["y"]) * center_strength * alpha
+
+            # === COLLISION FORCE (prevent overlap) ===
+            for i, n1 in enumerate(self.graph_nodes):
+                r1 = (6 + n1["data"].importance * 6) * collision_radius_mult
+                for j, n2 in enumerate(self.graph_nodes):
+                    if i >= j:
+                        continue
+                    r2 = (6 + n2["data"].importance * 6) * collision_radius_mult
+                    min_dist = r1 + r2
+
+                    dx = n2["x"] - n1["x"]
+                    dy = n2["y"] - n1["y"]
+                    dist = math.sqrt(dx * dx + dy * dy) or 1
+
+                    if dist < min_dist:
+                        # Push apart
+                        overlap = (min_dist - dist) / 2
+                        ux, uy = dx / dist, dy / dist
+                        n1["x"] -= ux * overlap
+                        n1["y"] -= uy * overlap
+                        n2["x"] += ux * overlap
+                        n2["y"] += uy * overlap
+
+            # === APPLY VELOCITY WITH DECAY ===
+            for node in self.graph_nodes:
+                node["vx"] *= velocity_decay
+                node["vy"] *= velocity_decay
+                node["x"] += node["vx"]
+                node["y"] += node["vy"]
+
+                # Bounds
+                node["x"] = max(margin, min(width - margin, node["x"]))
+                node["y"] = max(margin, min(height - margin - 30, node["y"]))
+
+    def _on_graph_click(self, event):
+        """Handle click on graph canvas."""
+        width = self.graph_canvas.winfo_width()
+        height = self.graph_canvas.winfo_height()
+        cx, cy = width / 2, height / 2
+        zoom = self.graph_zoom
+
+        # Check if clicked on a node (in screen coordinates)
+        for i, gnode in enumerate(self.graph_nodes):
+            # Transform node position to screen
+            sx = cx + (gnode["x"] - cx) * zoom + self.graph_pan_x
+            sy = cy + (gnode["y"] - cy) * zoom + self.graph_pan_y
+            radius = (6 + gnode["data"].importance * 6) * zoom
+
+            dx = event.x - sx
+            dy = event.y - sy
+            if dx * dx + dy * dy < (radius + 5) ** 2:  # +5 for easier clicking
+                self.graph_selected = i
+                self.graph_dragging = i
+                node = gnode["data"]
+                info = f"[{node.node_type.value.upper()}] {node.content} (importance: {node.importance:.2f})"
+                self.graph_info.configure(text=info[:100])
+                self._redraw_graph()
+                return
+
+        # Clicked on empty space - start panning
+        self.graph_selected = None
+        self.graph_panning = True
+        self.graph_pan_start = (event.x - self.graph_pan_x, event.y - self.graph_pan_y)
+        self.graph_info.configure(text="Drag to pan, scroll to zoom")
+
+    def _on_graph_drag(self, event):
+        """Handle drag on graph canvas."""
+        if self.graph_dragging is not None:
+            # Dragging a node - convert screen coords back to graph coords
+            width = self.graph_canvas.winfo_width()
+            height = self.graph_canvas.winfo_height()
+            cx, cy = width / 2, height / 2
+            zoom = self.graph_zoom
+
+            # Reverse transform: screen -> graph
+            gx = cx + (event.x - self.graph_pan_x - cx) / zoom
+            gy = cy + (event.y - self.graph_pan_y - cy) / zoom
+            self.graph_nodes[self.graph_dragging]["x"] = gx
+            self.graph_nodes[self.graph_dragging]["y"] = gy
+            self._redraw_graph()
+        elif self.graph_panning:
+            # Panning the view
+            self.graph_pan_x = event.x - self.graph_pan_start[0]
+            self.graph_pan_y = event.y - self.graph_pan_start[1]
+            self._redraw_graph()
+
+    def _on_graph_release(self, event):
+        """Handle mouse release on graph canvas."""
+        self.graph_dragging = None
+        self.graph_panning = False
+
+    def _on_graph_zoom(self, event):
+        """Handle mouse wheel zoom like Obsidian."""
+        # Get zoom direction
+        if event.num == 4 or (hasattr(event, 'delta') and event.delta > 0):
+            factor = 1.15  # zoom in
+        else:
+            factor = 0.85  # zoom out
+
+        # Limit zoom range
+        new_zoom = self.graph_zoom * factor
+        if 0.3 <= new_zoom <= 3.0:
+            self.graph_zoom = new_zoom
+            self._redraw_graph()
+
+    def _redraw_graph(self):
+        """Redraw graph without recalculating layout."""
+        self.graph_canvas.delete("all")
+        width = self.graph_canvas.winfo_width()
+        height = self.graph_canvas.winfo_height()
+        cx, cy = width / 2, height / 2  # center for zoom
+        zoom = self.graph_zoom
+
+        type_colors = {
+            "decision": "#22c55e", "error": "#ef4444", "pattern": "#3b82f6",
+            "task": "#f59e0b", "fact": "#a855f7", "file": "#64748b",
+            "function": "#06b6d4", "class": "#ec4899",
+        }
+
+        # Helper to apply zoom and pan
+        pan_x, pan_y = self.graph_pan_x, self.graph_pan_y
+        def z(x, y):
+            return cx + (x - cx) * zoom + pan_x, cy + (y - cy) * zoom + pan_y
+
+        # Draw edges - Obsidian style: thin gray lines
+        for edge in self.graph_edges:
+            src = self.graph_nodes[edge["source"]]
+            tgt = self.graph_nodes[edge["target"]]
+
+            # Small node radii (smaller circles)
+            src_radius = (6 + src["data"].importance * 6) * zoom
+            tgt_radius = (6 + tgt["data"].importance * 6) * zoom
+
+            # Apply zoom to positions
+            sx, sy = z(src["x"], src["y"])
+            tx, ty = z(tgt["x"], tgt["y"])
+
+            # Direction vector
+            dx, dy = tx - sx, ty - sy
+            dist = (dx*dx + dy*dy) ** 0.5 + 0.1
+
+            # Shorten line to node edges
+            ux, uy = dx / dist, dy / dist
+            x1 = sx + ux * (src_radius + 2)
+            y1 = sy + uy * (src_radius + 2)
+            x2 = tx - ux * (tgt_radius + 2)
+            y2 = ty - uy * (tgt_radius + 2)
+
+            # Skip if too short
+            if ((x2-x1)**2 + (y2-y1)**2) ** 0.5 < 3:
+                continue
+
+            # Obsidian style: thin gray edge
+            self.graph_canvas.create_line(x1, y1, x2, y2,
+                fill="#475569", width=1)
+
+        # Draw nodes - smaller circles with zoom
+        if not hasattr(self, '_node_photo_refs'):
+            self._node_photo_refs = []
+        self._node_photo_refs.clear()
+
+        for i, gnode in enumerate(self.graph_nodes):
+            node = gnode["data"]
+            color = type_colors.get(node.node_type.value, "#64748b")
+            # Smaller base radius: 6-12px instead of 12-22px
+            base_radius = 6 + node.importance * 6
+            radius = int(base_radius * zoom)
+            x, y = z(gnode["x"], gnode["y"])
+            x, y = int(x), int(y)
+            is_selected = (i == self.graph_selected)
+
+            # Draw selection ring first (underneath)
+            if is_selected:
+                sel_r = radius + 4
+                self.graph_canvas.create_oval(
+                    x - sel_r, y - sel_r, x + sel_r, y + sel_r,
+                    fill="", outline="#ffffff", width=2
+                )
+
+            # Draw node circle
+            self.graph_canvas.create_oval(
+                x - radius, y - radius, x + radius, y + radius,
+                fill=color, outline=""
+            )
+
+            # Label (only show if zoomed in enough)
+            if zoom > 0.6:
+                label = node.content[:15] + "..." if len(node.content) > 15 else node.content
+                label_y = y + radius + 10
+                font_size = max(7, int(8 * zoom))
+                self.graph_canvas.create_text(
+                    x, label_y, text=label,
+                    font=("Segoe UI", font_size), fill="#94a3b8"
+                )
+
+        # Legend
+        if height > 50:
+            legend_y = height - 20
+            legend_x = 10
+            for ntype, lbl in [("decision", "Decision"), ("error", "Error"), ("pattern", "Pattern"), ("task", "Task"), ("fact", "Fact")]:
+                color = type_colors.get(ntype, "#64748b")
+                self.graph_canvas.create_oval(legend_x, legend_y - 4, legend_x + 8, legend_y + 4, fill=color, outline="")
+                self.graph_canvas.create_text(legend_x + 14, legend_y, text=lbl, anchor="w", font=("Segoe UI", 7), fill="#94a3b8")
+                legend_x += 65
+
+    def _load_memory_data(self):
+        """Load memory data from GraphMemory."""
+        if not HAS_MEMORY:
+            self._show_stats_error("Memory module not available")
+            return
+
+        try:
+            # Get or create shared memory instance
+            if self.graph_memory is None:
+                # Use a shared memory instance
+                self.graph_memory = GraphMemory(agent_id="shared")
+                # Register for cleanup
+                self.dashboard._open_graph_memories["_viewer"] = self.graph_memory
+
+            self._update_stats()
+            self._update_shared_list()
+        except Exception as e:
+            self._show_stats_error(f"Error loading memory: {e}")
+
+    def _update_stats(self):
+        """Update statistics display."""
+        if not self.graph_memory:
+            return
+
+        try:
+            stats = self.graph_memory.get_stats()
+
+            text = f"""Database: {stats['db_path']}
+
+=== Agent Memory ({stats['agent_id']}) ===
+Total Nodes: {stats['total_nodes']}
+Total Relations: {stats['total_relations']}
+
+Nodes by Type:
+"""
+            for node_type, count in stats.get('nodes_by_type', {}).items():
+                text += f"  • {node_type}: {count}\n"
+
+            text += f"""
+=== Shared Memory ===
+Total Nodes: {stats['shared']['total_nodes']}
+Total Relations: {stats['shared']['total_relations']}
+
+Shared Nodes by Type:
+"""
+            for node_type, count in stats['shared'].get('nodes_by_type', {}).items():
+                text += f"  • {node_type}: {count}\n"
+
+            self.stats_text.configure(state="normal")
+            self.stats_text.delete("1.0", tk.END)
+            self.stats_text.insert("1.0", text)
+            self.stats_text.configure(state="disabled")
+
+        except Exception as e:
+            self._show_stats_error(f"Error getting stats: {e}")
+
+    def _update_shared_list(self):
+        """Update shared knowledge list."""
+        if not self.graph_memory:
+            return
+
+        # Clear existing items
+        for widget in self.shared_list.winfo_children():
+            widget.destroy()
+
+        try:
+            t = self.theme
+            shared_nodes = self.graph_memory.query_shared_only(limit=50)
+
+            if not shared_nodes:
+                empty_lbl = tk.Label(
+                    self.shared_list,
+                    text="No shared knowledge yet.\nPromote nodes using 'cam memory-promote'",
+                    font=("Segoe UI", 10),
+                    bg=t["card_bg"], fg=t["fg_dim"],
+                    justify="center"
+                )
+                empty_lbl.pack(expand=True, pady=20)
+                return
+
+            for node in shared_nodes:
+                item = tk.Frame(self.shared_list, bg=t["card_bg"])
+                item.pack(fill=tk.X, pady=2)
+
+                # Type badge
+                type_colors = {
+                    "decision": "#22c55e",
+                    "error": "#ef4444",
+                    "pattern": "#3b82f6",
+                    "task": "#f59e0b",
+                    "fact": "#8b5cf6",
+                    "file": "#6b7280",
+                }
+                type_color = type_colors.get(node.node_type.value, t["fg_dim"])
+
+                type_lbl = tk.Label(
+                    item, text=node.node_type.value[:3].upper(),
+                    font=("Segoe UI", 8),
+                    bg=type_color, fg="#ffffff",
+                    padx=4, pady=1
+                )
+                type_lbl.pack(side=tk.LEFT, padx=(8, 8), pady=6)
+
+                # Content
+                content = node.content[:80] + "..." if len(node.content) > 80 else node.content
+                content_lbl = tk.Label(
+                    item, text=content,
+                    font=("Segoe UI", 9),
+                    bg=t["card_bg"], fg=t["fg"],
+                    anchor="w"
+                )
+                content_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=6)
+
+                # Importance
+                imp_lbl = tk.Label(
+                    item, text=f"{node.importance:.1f}",
+                    font=("Segoe UI", 8),
+                    bg=t["card_bg"], fg=t["fg_dim"],
+                    padx=8
+                )
+                imp_lbl.pack(side=tk.RIGHT, pady=6)
+
+        except Exception as e:
+            error_lbl = tk.Label(
+                self.shared_list,
+                text=f"Error loading shared knowledge: {e}",
+                font=("Segoe UI", 10),
+                bg=self.theme["card_bg"], fg="#ef4444"
+            )
+            error_lbl.pack(expand=True, pady=20)
+
+    def _do_search(self):
+        """Perform search."""
+        query = self.search_entry.get().strip()
+        if not query or not self.graph_memory:
+            return
+
+        try:
+            results = self.graph_memory.query(
+                search_term=query,
+                limit=50,
+                include_shared=True
+            )
+
+            text = f"Search: '{query}'\nFound: {len(results)} results\n\n"
+
+            for node in results:
+                text += f"[{node.node_type.value.upper()}] (imp: {node.importance:.2f})\n"
+                text += f"  {node.content}\n\n"
+
+            self.search_results.configure(state="normal")
+            self.search_results.delete("1.0", tk.END)
+            self.search_results.insert("1.0", text)
+            self.search_results.configure(state="disabled")
+
+        except Exception as e:
+            self.search_results.configure(state="normal")
+            self.search_results.delete("1.0", tk.END)
+            self.search_results.insert("1.0", f"Search error: {e}")
+            self.search_results.configure(state="disabled")
+
+    def _show_stats_error(self, message: str):
+        """Show error in stats tab."""
+        self.stats_text.configure(state="normal")
+        self.stats_text.delete("1.0", tk.END)
+        self.stats_text.insert("1.0", f"Error: {message}")
+        self.stats_text.configure(state="disabled")
+
+    def destroy(self):
+        """Cleanup on close."""
+        # Remove from tracked memories
+        if "_viewer" in self.dashboard._open_graph_memories:
+            try:
+                self.dashboard._open_graph_memories["_viewer"].close()
+            except:
+                pass
+            del self.dashboard._open_graph_memories["_viewer"]
+        super().destroy()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # AGENT CONFIGURATION DIALOG
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1236,13 +2119,13 @@ class AgentConfigDialog:
         self.permissions_frame = tk.Frame(self.content, bg=t["card_bg"])
 
         # Load current permissions from agent
-        from .registry import PermissionConfig, PERMISSION_PRESETS, get_permission_preset
+        from claude_agent_manager.registry import PermissionConfig, PERMISSION_PRESETS, get_permission_preset
         self.current_permissions = PermissionConfig()
         self.agent_autopilot_enabled = False
 
         if HAS_BACKEND and manager:
             try:
-                from .registry import load_agent
+                from claude_agent_manager.registry import load_agent
                 agent_root = manager.get_agent_root()
                 agent = load_agent(agent_root, self.agent_data["id"])
                 self.current_permissions = agent.permissions
@@ -1427,7 +2310,7 @@ class AgentConfigDialog:
 
     def _update_preset_desc(self):
         """Update preset description."""
-        from .registry import PERMISSION_PRESETS
+        from claude_agent_manager.registry import PERMISSION_PRESETS
         preset = self.perm_preset_var.get()
         descriptions = {
             "default": "Balanced permissions - read access, common dev tools (git, npm, pip, python), MCP servers. Blocks dangerous commands.",
@@ -1492,7 +2375,7 @@ class AgentConfigDialog:
         # 5. Save permissions
         if HAS_BACKEND and manager and hasattr(self, 'perm_preset_var'):
             try:
-                from .registry import PermissionConfig, update_agent_permissions, update_agent_autopilot
+                from claude_agent_manager.registry import PermissionConfig, update_agent_permissions, update_agent_autopilot
 
                 # Parse allow/deny rules from text
                 allow_text = self.allow_text.get("1.0", tk.END).strip()
@@ -2121,6 +3004,10 @@ class AgentDashboard:
         self._theme_transition_step = 0
         self._terminal_windows: Dict[str, tk.Toplevel] = {}  # agent_id -> window
 
+        # Memory tracking for cleanup
+        self._open_graph_memories: Dict[str, Any] = {}  # agent_id -> GraphMemory
+        self._open_session_memories: Dict[str, Any] = {}  # agent_id -> SessionMemory
+
         self._build_ui()
         self._load_agents()
         self._schedule_refresh()
@@ -2130,6 +3017,9 @@ class AgentDashboard:
 
         # Set initial title bar color
         self.root.after(50, lambda: set_title_bar_color(self.root, self.is_dark))
+
+        # Register cleanup on window close
+        self.root.protocol("WM_DELETE_WINDOW", self._on_app_close)
 
     def _build_ui(self):
         t = self.theme
@@ -2253,6 +3143,18 @@ class AgentDashboard:
         self.tile_btn.bind("<Enter>", lambda e: self.tile_btn.configure(fg=self.theme["accent"]))
         self.tile_btn.bind("<Leave>", lambda e: self.tile_btn.configure(fg=self.theme["fg_dim"]))
 
+        # Memory button (before tile button)
+        self.memory_btn = tk.Label(
+            self.footer, text="⟁",  # Memory/brain-like symbol
+            font=("Segoe UI", 10),
+            bg=t["card_bg"], fg=t["fg_dim"],
+            cursor="hand2"
+        )
+        self.memory_btn.pack(side=tk.RIGHT, padx=(0, 10))
+        self.memory_btn.bind("<Button-1>", lambda e: self._show_memory_panel())
+        self.memory_btn.bind("<Enter>", lambda e: self.memory_btn.configure(fg=self.theme["accent"]))
+        self.memory_btn.bind("<Leave>", lambda e: self.memory_btn.configure(fg=self.theme["fg_dim"]))
+
         # Settings panel (hidden) - disable propagation
         self.settings_panel = AgentSettingsPanel(
             self.main, theme=t, on_close=self._close_settings
@@ -2273,9 +3175,30 @@ class AgentDashboard:
         self._apply_theme()
         self.root.after_idle(lambda: set_title_bar_color(self.root, is_dark))
 
+    def _show_memory_panel(self):
+        """Show the memory viewer panel."""
+        # Check if already open
+        if hasattr(self, '_memory_panel') and self._memory_panel:
+            try:
+                self._memory_panel.lift()
+                self._memory_panel.focus_force()
+                return
+            except tk.TclError:
+                # Window was destroyed
+                pass
+
+        # Create new memory panel
+        self._memory_panel = MemoryPanel(self.root, self.theme, self)
+
+        # Center on parent
+        self._memory_panel.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 600) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 500) // 2
+        self._memory_panel.geometry(f"+{x}+{y}")
+
     def _show_app_settings(self):
         """Show application settings dialog."""
-        from . import settings as app_settings
+        from claude_agent_manager import settings as app_settings
 
         t = self.theme
         current = app_settings.get_settings(reload=True)
@@ -2562,6 +3485,7 @@ class AgentDashboard:
         self.footer.configure(bg=t["card_bg"])
         self.settings_btn.configure(bg=t["card_bg"], fg=t["fg_dim"])
         self.tile_btn.configure(bg=t["card_bg"], fg=t["fg_dim"])
+        self.memory_btn.configure(bg=t["card_bg"], fg=t["fg_dim"])
         self.sep.configure(bg=t["separator"])
         self.agents_frame.configure(bg=t["card_bg"])
 
@@ -2604,7 +3528,7 @@ class AgentDashboard:
         if not HAS_TILING or get_hotkey_manager is None:
             return
 
-        from . import settings as app_settings
+        from claude_agent_manager import settings as app_settings
         settings = app_settings.get_settings()
 
         hk_manager = get_hotkey_manager()
@@ -2711,6 +3635,7 @@ class AgentDashboard:
     def _fetch_agents_data(self) -> List[Dict]:
         """Fetch current agents data using manager."""
         data = []
+        print(f"[DEBUG] _fetch_agents_data: HAS_BACKEND={HAS_BACKEND}")
 
         if HAS_BACKEND:
             try:
@@ -2751,12 +3676,15 @@ class AgentDashboard:
 
     def _load_agents(self):
         """Full load (initial or forced)."""
+        print(f"[DEBUG] _load_agents called, current ui_mode: {getattr(self, '_ui_mode', 'none')}")
+
         # Remember selected agent to refresh settings panel
         selected_id = None
         if self.settings_visible and self.settings_panel.agent_data:
             selected_id = self.settings_panel.agent_data.get("id")
 
         self.agents_data = self._fetch_agents_data()
+        print(f"[DEBUG] Fetched {len(self.agents_data)} agents: {[a.get('id') for a in self.agents_data]}")
         self._render()
 
         # Refresh settings panel if it was showing an agent
@@ -2796,10 +3724,14 @@ class AgentDashboard:
             self.root.minsize(900, 350)
             self.root.geometry("950x380")
 
-            # Hide card chrome (header, usage_bar, separator, footer) for clean setup screen
+            # Hide card chrome (header, usage_bar, separator, footer, worktree) for clean setup screen
             self.header.pack_forget()
             self.usage_bar.pack_forget()
             self.sep.pack_forget()
+            if hasattr(self, 'worktree_sep') and self.worktree_sep:
+                self.worktree_sep.pack_forget()
+            if self.worktree_panel:
+                self.worktree_panel.pack_forget()
             self.footer.pack_forget()
 
             # Make card fill entire window
@@ -2840,7 +3772,7 @@ class AgentDashboard:
 
         # Welcome icon - use white version for dark theme
         icon_file = "icon_white.png" if self.is_dark else "icon.png"
-        icon_path = Path(__file__).parent.parent.parent / "assets" / icon_file
+        icon_path = get_asset_path(icon_file)
         if icon_path.exists():
             try:
                 self._welcome_icon = tk.PhotoImage(file=str(icon_path))
@@ -2901,7 +3833,7 @@ class AgentDashboard:
 
             if HAS_BACKEND:
                 try:
-                    from .sharing import get_builtin_preset
+                    from claude_agent_manager.sharing import get_builtin_preset
                     import uuid
 
                     preset = get_builtin_preset(preset_name)
@@ -3088,23 +4020,39 @@ class AgentDashboard:
         def on_create():
             purpose = self._welcome_purpose.get().strip()
             project = self._welcome_path.get().strip()
+            print(f"[DEBUG] on_create called: purpose={purpose}, project={project}, HAS_BACKEND={HAS_BACKEND}")
             if not purpose or not project:
+                print("[DEBUG] Missing purpose or project, returning")
                 return
+
+            # Show creating state
+            hint_label.configure(text="Creating agent...", fg=t["accent"])
+            create_btn.configure(state="disabled")
+            self.root.update()
 
             if HAS_BACKEND:
                 try:
-                    manager.create_agent(
+                    print(f"[DEBUG] Calling manager.create_agent...")
+                    agent = manager.create_agent(
                         purpose=purpose,
                         project_path=project,
                         use_browser=False,
                     )
+                    print(f"[DEBUG] Created agent: {agent.id if hasattr(agent, 'id') else agent}")
+                    hint_label.configure(text="Agent created! Loading...", fg=t["accent"])
                 except Exception as e:
-                    print(f"Create agent error: {e}")
-                    hint_label.configure(text=f"Error: {e}", fg=t["error"] if "error" in t else t["fg"])
+                    print(f"[DEBUG] Create agent error: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    hint_label.configure(text=f"Error: {e}", fg=t["error"] if "error" in t else "#ff6b6b")
+                    create_btn.configure(state="normal")
                     return
+            else:
+                print("[DEBUG] HAS_BACKEND is False, cannot create agent!")
 
-            # Delay refresh to let pm2 start
-            self.root.after(2500, self._load_agents)
+            # Delay refresh to let agent register
+            print("[DEBUG] Scheduling _load_agents in 1000ms")
+            self.root.after(1000, self._load_agents)
 
         create_btn = AnimatedButton(
             btn_container, text="Create Agent",
@@ -3141,6 +4089,7 @@ class AgentDashboard:
 
     def _render(self):
         t = self.theme
+        print(f"[DEBUG] _render called, agents_data count: {len(self.agents_data)}")
 
         # Clear
         for w in self.agents_frame.winfo_children():
@@ -3153,19 +4102,38 @@ class AgentDashboard:
 
         if not self.agents_data:
             # No agents - show inline creation form (setup mode - large window)
+            print("[DEBUG] No agents, showing welcome form")
             self._render_welcome_form()
             return
 
         # Dashboard mode - restore card chrome, compact window
+        print(f"[DEBUG] Has agents, switching to dashboard mode (current: {getattr(self, '_ui_mode', 'none')})")
         if not hasattr(self, '_ui_mode') or self._ui_mode != 'dashboard':
             self._ui_mode = 'dashboard'
             self.root.minsize(460, 400)
 
-            # Restore card chrome (header, usage_bar, separator, footer)
-            self.header.pack(fill=tk.X, pady=(0, 8), before=self.agents_frame)
-            self.usage_bar.pack(fill=tk.X, pady=(4, 0), before=self.agents_frame)
-            self.sep.pack(fill=tk.X, pady=(4, 8), before=self.agents_frame)
-            self.footer.pack(fill=tk.X, pady=(4, 0), after=self.agents_frame)
+            # Unpack all card children first to reset order
+            self.header.pack_forget()
+            self.usage_bar.pack_forget()
+            self.sep.pack_forget()
+            self.agents_frame.pack_forget()
+            if hasattr(self, 'worktree_sep') and self.worktree_sep:
+                self.worktree_sep.pack_forget()
+            if self.worktree_panel:
+                self.worktree_panel.pack_forget()
+            self.footer.pack_forget()
+
+            # Repack in correct order
+            self.header.pack(fill=tk.X, pady=(0, 8))
+            self.usage_bar.pack(fill=tk.X, pady=(4, 0))
+            self.sep.pack(fill=tk.X, pady=(4, 8))
+            self.agents_frame.pack(fill=tk.BOTH, expand=True)
+            # Worktree panel below agents (if available)
+            if hasattr(self, 'worktree_sep') and self.worktree_sep:
+                self.worktree_sep.pack(fill=tk.X, pady=(4, 4))
+            if self.worktree_panel:
+                self.worktree_panel.pack(fill=tk.X, pady=(0, 4))
+            self.footer.pack(fill=tk.X, pady=(4, 0))
 
             # Restore card - fill entire window (no empty space)
             self.card.pack_forget()
@@ -3729,6 +4697,9 @@ class AgentDashboard:
         # Close our terminal window if open
         self._close_terminal_window(agent_id)
 
+        # Close session memory for this agent
+        self._close_agent_memory(agent_id)
+
         if not HAS_BACKEND:
             for a in self.agents_data:
                 if a["id"] == agent_id:
@@ -3742,6 +4713,77 @@ class AgentDashboard:
             print(f"Stop error: {e}")
 
         self.root.after(500, self._load_agents)
+
+    def _close_agent_memory(self, agent_id: str):
+        """Close memory instances for a specific agent."""
+        # Close session memory
+        if agent_id in self._open_session_memories:
+            try:
+                self._open_session_memories[agent_id].close()
+                print(f"[MEMORY] Closed SessionMemory for {agent_id}")
+            except Exception as e:
+                print(f"[MEMORY] Error closing SessionMemory for {agent_id}: {e}")
+            finally:
+                del self._open_session_memories[agent_id]
+
+        # Close graph memory
+        if agent_id in self._open_graph_memories:
+            try:
+                self._open_graph_memories[agent_id].close()
+                print(f"[MEMORY] Closed GraphMemory for {agent_id}")
+            except Exception as e:
+                print(f"[MEMORY] Error closing GraphMemory for {agent_id}: {e}")
+            finally:
+                del self._open_graph_memories[agent_id]
+
+    def _close_all_memories(self):
+        """Close all open memory instances."""
+        print("[MEMORY] Closing all memory instances...")
+
+        # Close all session memories
+        for agent_id in list(self._open_session_memories.keys()):
+            try:
+                self._open_session_memories[agent_id].close()
+                print(f"[MEMORY] Closed SessionMemory for {agent_id}")
+            except Exception as e:
+                print(f"[MEMORY] Error closing SessionMemory for {agent_id}: {e}")
+        self._open_session_memories.clear()
+
+        # Close all graph memories
+        for agent_id in list(self._open_graph_memories.keys()):
+            try:
+                self._open_graph_memories[agent_id].close()
+                print(f"[MEMORY] Closed GraphMemory for {agent_id}")
+            except Exception as e:
+                print(f"[MEMORY] Error closing GraphMemory for {agent_id}: {e}")
+        self._open_graph_memories.clear()
+
+        print("[MEMORY] All memory instances closed")
+
+    def _on_app_close(self):
+        """Handle application close - cleanup all resources."""
+        print("[SHUTDOWN] Dashboard closing...")
+
+        # Close all terminal windows
+        for agent_id in list(self._terminal_windows.keys()):
+            try:
+                self._close_terminal_window(agent_id)
+            except Exception as e:
+                print(f"[SHUTDOWN] Error closing terminal for {agent_id}: {e}")
+
+        # Close all memory instances
+        self._close_all_memories()
+
+        # Cleanup hotkeys
+        if HAS_TILING and hasattr(self, '_hotkey_manager') and self._hotkey_manager:
+            try:
+                self._hotkey_manager.stop()
+                print("[SHUTDOWN] Hotkey manager stopped")
+            except Exception as e:
+                print(f"[SHUTDOWN] Error stopping hotkey manager: {e}")
+
+        print("[SHUTDOWN] Cleanup complete, destroying window")
+        self.root.destroy()
 
     def _tile_agent_windows(self, layout: str = "smart"):
         """Tile all open agent windows."""
@@ -3770,7 +4812,7 @@ class AgentDashboard:
             return
 
         # Get settings for layout and gap
-        from . import settings as app_settings
+        from claude_agent_manager import settings as app_settings
         settings = app_settings.get_settings()
         gap = getattr(settings, 'tile_gap', 8)
 
@@ -3817,7 +4859,7 @@ class AgentDashboard:
             if config and HAS_BACKEND:
                 try:
                     # Update agent record with new config
-                    from .registry import load_agent, save_agent
+                    from claude_agent_manager.registry import load_agent, save_agent
                     agent_root = manager.get_agent_root()
                     rec = load_agent(agent_root, agent_id)
                     updated = rec.model_copy()
@@ -3826,7 +4868,7 @@ class AgentDashboard:
 
                     # Regenerate run.cmd with new env vars
                     agent_dir = agent_root / agent_id
-                    from .manager import _write_run_cmd
+                    from claude_agent_manager.manager import _write_run_cmd
                     title = f"{rec.purpose} | :{rec.port}"
                     _write_run_cmd(
                         agent_dir, title=title, port=rec.port,
@@ -4025,7 +5067,7 @@ class AgentDashboard:
         btn_frame.pack(fill=tk.X, padx=16, pady=(0, 16))
 
         def on_save():
-            from .registry import ProxyConfig
+            from claude_agent_manager.registry import ProxyConfig
             port_val = port_entry.get().strip()
             new_proxy = ProxyConfig(
                 enabled=enabled_var.get(),
@@ -4092,11 +5134,19 @@ def launch_dashboard() -> None:
 
     root = tk.Tk()
 
-    # Set app icon
-    icon_path = Path(__file__).parent.parent.parent / "assets" / "icon.png"
-    if icon_path.exists():
+    # Set app icon - use .ico for Windows taskbar, .png as fallback
+    if sys.platform == "win32":
+        ico_path = get_asset_path("icon.ico")
+        if ico_path.exists():
+            try:
+                root.iconbitmap(str(ico_path))
+            except Exception:
+                pass
+    # Fallback to PNG for other platforms or if ico fails
+    png_path = get_asset_path("icon.png")
+    if png_path.exists():
         try:
-            icon = tk.PhotoImage(file=str(icon_path))
+            icon = tk.PhotoImage(file=str(png_path))
             root.iconphoto(True, icon)
         except Exception:
             pass

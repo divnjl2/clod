@@ -376,6 +376,23 @@ class SessionMemory:
             total += len(insight.subtasks_completed)
         return total
 
+    def close(self) -> None:
+        """Close memory connections and release resources."""
+        if self._graph_memory is not None:
+            try:
+                self._graph_memory.close()
+                logger.debug(f"Closed GraphMemory for agent {self.agent_id}")
+            except Exception as e:
+                logger.warning(f"Error closing GraphMemory: {e}")
+            finally:
+                self._graph_memory = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
 
 # =============================================================================
 # CONVENIENCE FUNCTIONS
