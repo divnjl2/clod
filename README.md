@@ -3,6 +3,9 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://www.microsoft.com/windows)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/divnjl2/clod/pulls)
+
+> **We're looking for contributors!** This is an open-source project and we'd love your help to make it better. Whether you're interested in cross-platform support, new features, bug fixes, or documentation — all contributions are welcome. Check out the [Contributing](#contributing) section below to get started!
 
 **Multi-agent orchestration for Claude Code CLI** — Run multiple isolated Claude Code instances with their own memory, permissions, and project contexts. Perfect for developers juggling multiple projects or teams managing AI-assisted workflows.
 
@@ -82,6 +85,70 @@ Smart layouts based on active agent count:
 | `Ctrl+Alt+M` | Minimize all agents |
 | `Ctrl+Alt+1-4` | Focus specific agent |
 | `Ctrl+Alt+D` | Toggle dashboard |
+
+## Memory System
+
+Claude Agent Manager includes a **two-layer memory architecture** that enables both per-agent isolation and project-wide knowledge sharing.
+
+### Architecture
+
+```
++----------------------------------------------------------+
+|              SHARED MEMORY (Project-wide)                 |
+|   Patterns, decisions, errors — visible to ALL agents    |
+|                        ^ promote                          |
++----------------------------------------------------------+
+|  Agent A Memory  |  Agent B Memory  |  Agent C Memory    |
+|   (isolated)     |    (isolated)    |    (isolated)      |
++----------------------------------------------------------+
+```
+
+### How It Works
+
+1. **Claude-Mem** captures observations during Claude Code sessions (decisions, discoveries, bugfixes)
+2. **GraphMemory** stores structured knowledge as a graph with nodes and relations
+3. **Sync** transfers observations from claude-mem to agent's GraphMemory
+4. **Promote** moves important insights to shared memory for all agents to see
+
+### Memory Commands
+
+```powershell
+# Sync claude-mem observations to GraphMemory
+cam claude-mem-sync -a my-agent
+
+# View memory statistics
+cam memory-stats -a my-agent
+
+# Promote an insight to shared memory
+cam memory-promote <node_id> -a my-agent
+
+# View shared (project-wide) memory
+cam memory-shared
+
+# Setup claude-mem (auto-installs Bun if needed)
+cam claude-mem-setup
+
+# Run synthetic test to verify memory system
+cam claude-mem-test
+```
+
+### Node Types
+
+| Type | Description | Importance |
+|------|-------------|------------|
+| `decision` | Architectural/design decisions | 0.8 |
+| `error` | Bugs fixed (learn from mistakes) | 0.9 |
+| `pattern` | Code patterns discovered | 0.85 |
+| `task` | Completed tasks | 0.7 |
+| `fact` | Project facts, refactorings | 0.5 |
+| `file` | Files referenced | 0.3 |
+
+### Benefits
+
+- **Session Memory**: Each agent has isolated memory for its work context
+- **Shared Knowledge**: Promote important insights for all agents to benefit
+- **No API Costs**: Uses SQLite locally, no external LLM calls for memory
+- **Automatic Sync**: Bridge between claude-mem and structured GraphMemory
 
 ## Installation
 
@@ -254,7 +321,7 @@ pip install -e ".[dev]"
 - [ ] macOS support
 - [ ] Linux support
 - [ ] Agent groups/workspaces
-- [ ] Shared memory between agents
+- [x] Shared memory between agents ✓
 - [ ] Web-based dashboard alternative
 - [ ] Docker deployment
 - [ ] VS Code extension
@@ -265,7 +332,7 @@ pip install -e ".[dev]"
 A: This is designed for the CLI version. VS Code extension has its own instance management.
 
 **Q: Can agents share memory?**
-A: Currently each agent has isolated memory. Shared memory is on the roadmap.
+A: Yes! Each agent has isolated session memory, but you can promote important insights to shared project-wide memory. Use `cam memory-promote <node_id>` to share knowledge between agents.
 
 **Q: Why Windows-first?**
 A: The embedded console feature uses Windows APIs. Cross-platform is planned.
