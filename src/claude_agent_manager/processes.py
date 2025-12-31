@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -11,9 +12,85 @@ CREATE_NEW_CONSOLE = 0x00000010
 CREATE_NO_WINDOW = 0x08000000
 
 
+def _get_hidden_startupinfo():
+    """Get startupinfo to hide console windows completely on Windows."""
+    if sys.platform != 'win32':
+        return None
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+    return startupinfo
+
+
 def which(cmd: str) -> Optional[str]:
     from shutil import which as _which
     return _which(cmd)
+
+
+def ensure_pm2() -> bool:
+    """
+    Ensure pm2 is installed. If not found, auto-install via npm.
+    Returns True if pm2 is available, False if installation failed.
+    """
+    if which("pm2"):
+        return True
+
+    # Check if npm is available
+    npm = which("npm")
+    if not npm:
+        raise RuntimeError("npm not found in PATH. Please install Node.js first: https://nodejs.org/")
+
+    # Install pm2 globally
+    try:
+        result = subprocess.run(
+            [npm, "install", "-g", "pm2"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            creationflags=CREATE_NO_WINDOW,
+            startupinfo=_get_hidden_startupinfo(),
+            timeout=120,
+        )
+        if result.returncode == 0:
+            return True
+        else:
+            raise RuntimeError(f"Failed to install pm2: {result.stderr.strip() or result.stdout.strip()}")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("pm2 installation timed out")
+
+
+def ensure_claude_cli() -> bool:
+    """
+    Ensure claude CLI is installed. If not found, auto-install via npm.
+    Returns True if claude is available, False if installation failed.
+    """
+    if which("claude"):
+        return True
+
+    npm = which("npm")
+    if not npm:
+        raise RuntimeError("npm not found in PATH. Please install Node.js first: https://nodejs.org/")
+
+    try:
+        result = subprocess.run(
+            [npm, "install", "-g", "@anthropic-ai/claude-code"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            creationflags=CREATE_NO_WINDOW,
+            startupinfo=_get_hidden_startupinfo(),
+            timeout=180,
+        )
+        if result.returncode == 0:
+            return True
+        else:
+            raise RuntimeError(f"Failed to install claude: {result.stderr.strip() or result.stdout.strip()}")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("claude installation timed out")
 
 
 def is_pid_running(pid: Optional[int]) -> bool:
@@ -40,7 +117,11 @@ def kill_tree(pid: int) -> None:
 def run_pm2(args: list[str], cwd: Optional[str] = None, env: Optional[dict[str, str]] = None) -> subprocess.CompletedProcess:
     pm2 = which("pm2")
     if not pm2:
-        raise RuntimeError("pm2 not found in PATH. Install: npm install -g pm2")
+        # Auto-install pm2 if not found
+        ensure_pm2()
+        pm2 = which("pm2")
+        if not pm2:
+            raise RuntimeError("pm2 not found in PATH after installation attempt")
     return subprocess.run(
         [pm2, *args],
         cwd=cwd,
@@ -51,6 +132,7 @@ def run_pm2(args: list[str], cwd: Optional[str] = None, env: Optional[dict[str, 
         errors="replace",
         check=False,
         creationflags=CREATE_NO_WINDOW,
+        startupinfo=_get_hidden_startupinfo(),
     )
 
 
@@ -113,6 +195,13 @@ def pm2_status(name: str) -> Optional[dict]:
 def spawn_cmd(project_path: str, port: int) -> Optional[int]:
     """Spawn a command window with claude for the project."""
     claude = which("claude")
+    if not claude:
+        # Auto-install claude CLI if not found
+        try:
+            ensure_claude_cli()
+            claude = which("claude")
+        except Exception:
+            pass
     if not claude:
         return None
 

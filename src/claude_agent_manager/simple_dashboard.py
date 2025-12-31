@@ -2210,6 +2210,18 @@ class AgentConfigDialog:
                         btn.configure(bg=t["btn_bg"], fg=t["fg"])
                 self._update_preset_desc()
 
+            # Auto-save autopilot state immediately
+            if HAS_BACKEND and manager:
+                try:
+                    from claude_agent_manager.registry import update_agent_autopilot
+                    agent_root = manager.get_agent_root()
+                    update_agent_autopilot(agent_root, self.agent_data["id"], state)
+                    # Trigger card refresh via on_save callback
+                    if self.on_save:
+                        self.on_save(self.agent_data["id"], None)
+                except Exception:
+                    pass
+
         self.autopilot_switch = ToggleSwitch(
             autopilot_inner,
             width=44, height=22,
@@ -4879,6 +4891,8 @@ class AgentDashboard:
                     print(f"Config save error: {e}")
                     import traceback
                     traceback.print_exc()
+            # Refresh cards to show updated autopilot badge
+            self._load_agents()
 
         AgentConfigDialog(self.root, agent, self.theme, on_config_save)
 
@@ -5131,6 +5145,13 @@ class AgentDashboard:
 def launch_dashboard() -> None:
     # Ensure app directories exist
     ensure_app_dirs()
+
+    # Set AppUserModelID for Windows taskbar icon
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("com.claude.agentmanager")
+        except Exception:
+            pass
 
     root = tk.Tk()
 

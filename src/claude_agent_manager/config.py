@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class AppConfig(BaseModel):
     """Глобальный конфиг менеджера."""
 
-    claude_mem_root: Optional[str] = Field(default=None)
+    claude_mem_root: str = Field(default_factory=lambda: str(Path.home() / ".claude-mem"))
     worker_script: Optional[str] = Field(default=None)
 
     agent_root: str = Field(default_factory=lambda: str(Path.home() / ".claude-agents"))
@@ -22,10 +22,9 @@ class AppConfig(BaseModel):
     port_max: int = 37799
 
     def validate_ready(self) -> None:
+        """Validate that essential config is set. worker_script is optional."""
         if not self.claude_mem_root:
             raise ValueError("Config 'claude_mem_root' is not set. Run: cam config --claude-mem-root ...")
-        if not self.worker_script:
-            raise ValueError("Config 'worker_script' is not set. Run: cam config --worker-script ...")
 
 
 def config_dir() -> Path:
