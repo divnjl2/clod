@@ -184,6 +184,36 @@ except ImportError:
     TEMPLATES_API_AVAILABLE = False
     templates_api_router = None
 
+# Team Customization
+try:
+    from .team_customization import (
+        AgentSpecialization,
+        CommunicationStyle,
+        ModelConfig,
+        ReasoningConfig,
+        ToolsConfig,
+        MemoryConfig,
+        CustomAgentConfig,
+        TeamWorkflow,
+        CustomTeamConfig,
+        TeamTemplates,
+        TeamConfigManager,
+    )
+    CUSTOMIZATION_AVAILABLE = True
+except ImportError:
+    CUSTOMIZATION_AVAILABLE = False
+    AgentSpecialization = None
+    CommunicationStyle = None
+    ModelConfig = None
+    ReasoningConfig = None
+    ToolsConfig = None
+    MemoryConfig = None
+    CustomAgentConfig = None
+    TeamWorkflow = None
+    CustomTeamConfig = None
+    TeamTemplates = None
+    TeamConfigManager = None
+
 __all__ = [
     # Orchestrator
     "TeamOrchestrator",
@@ -285,6 +315,20 @@ __all__ = [
     # Templates API
     "templates_api_router",
     "TEMPLATES_API_AVAILABLE",
+
+    # Team Customization
+    "AgentSpecialization",
+    "CommunicationStyle",
+    "ModelConfig",
+    "ReasoningConfig",
+    "ToolsConfig",
+    "MemoryConfig",
+    "CustomAgentConfig",
+    "TeamWorkflow",
+    "CustomTeamConfig",
+    "TeamTemplates",
+    "TeamConfigManager",
+    "CUSTOMIZATION_AVAILABLE",
 ]
 
 __version__ = "1.0.0"
