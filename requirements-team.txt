@@ -1,0 +1,17 @@
+# Team Mode Requirements
+# =======================
+
+# Core dependencies (already in main project)
+rich>=13.0.0
+typer>=0.9.0
+anthropic>=0.18.0
+
+# Optional: AutoGen for advanced multi-agent
+pyautogen>=0.2.0  # Optional but recommended
+
+# Optional: CrewAI as alternative
+crewai>=0.1.0  # Alternative to AutoGen
+
+# For async operations
+aiofiles>=23.0.0
+asyncio-mqtt>=0.16.0  # If using MQTT for agent communication

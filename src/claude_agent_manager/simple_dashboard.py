@@ -3601,6 +3601,47 @@ class AgentDashboard:
         left = tk.Frame(content, bg=t["card_bg"])
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
 
+        # Team Template Quick Select
+        template_frame = tk.Frame(left, bg=t["card_bg"])
+        template_frame.pack(fill=tk.X, pady=(0, 8))
+
+        tk.Label(template_frame, text="Template:", font=("Segoe UI", 9),
+                bg=t["card_bg"], fg=t["fg_dim"]).pack(side=tk.LEFT)
+
+        # Template options
+        self.team_templates = {
+            "custom": ("Custom", "Build your own team", "#6366F1"),
+            "full_stack": ("Full-Stack", "Frontend + Backend + DevOps", "#10B981"),
+            "vpn_service": ("VPN Service", "Backend + Telegram + Payments", "#0EA5E9"),
+            "security": ("Security", "Audit + Pentest + Review", "#EF4444"),
+            "data": ("Data/ML", "Data + ML + Backend", "#8B5CF6"),
+        }
+
+        self.selected_template = tk.StringVar(value="custom")
+        self.template_btns = {}
+
+        for tmpl_id, (name, desc, color) in self.team_templates.items():
+            def make_tmpl_click(tid=tmpl_id, col=color):
+                def handler(e=None):
+                    self.selected_template.set(tid)
+                    for m, btn in self.template_btns.items():
+                        if m == tid:
+                            btn.configure(bg=col, fg="#fff")
+                        else:
+                            btn.configure(bg=t["btn_bg"], fg=t["fg_dim"])
+                    # Apply template roles
+                    self._apply_template(tid)
+                return handler
+
+            is_selected = tmpl_id == "custom"
+            btn = tk.Label(template_frame, text=name, font=("Segoe UI", 8),
+                          bg=color if is_selected else t["btn_bg"],
+                          fg="#fff" if is_selected else t["fg_dim"],
+                          cursor="hand2", padx=6, pady=2)
+            btn.pack(side=tk.LEFT, padx=(4, 0))
+            btn.bind("<Button-1>", make_tmpl_click())
+            self.template_btns[tmpl_id] = btn
+
         tk.Label(left, text="Task Description", font=("Segoe UI", 10),
                  bg=t["card_bg"], fg=t["fg_dim"], anchor="w").pack(fill=tk.X, pady=(0, 4))
 
@@ -3990,6 +4031,39 @@ class AgentDashboard:
         if folder:
             self.team_path_entry.delete(0, tk.END)
             self.team_path_entry.insert(0, folder)
+
+    def _apply_template(self, template_id: str):
+        """Apply a team template by setting roles."""
+        if not hasattr(self, 'role_checkboxes'):
+            return
+
+        # Template role mappings
+        template_roles = {
+            "custom": [],  # Don't change roles
+            "full_stack": ["architect", "backend", "frontend", "qa", "devops"],
+            "vpn_service": ["architect", "backend", "telegram", "qa"],
+            "security": ["architect", "security", "reviewer", "qa"],
+            "data": ["architect", "backend", "database", "qa"],
+        }
+
+        roles_to_enable = template_roles.get(template_id, [])
+        if not roles_to_enable:
+            return  # Custom - don't change
+
+        # Update role checkboxes
+        for role, var in self.role_checkboxes.items():
+            should_enable = role in roles_to_enable
+            if var.get() != should_enable:
+                var.set(should_enable)
+
+        # Refresh toggle UI
+        self._refresh_role_toggles()
+
+    def _refresh_role_toggles(self):
+        """Refresh toggle visuals after programmatic changes."""
+        # Note: This would need the toggles to be stored for updating
+        # For now, we just update the BooleanVar values and toggles reflect on next build
+        pass
 
     def _team_log(self, msg: str):
         self.team_output.insert(tk.END, msg + "\n")

@@ -154,6 +154,36 @@ except ImportError:
     TeamState = None
     APIAgentStatus = None
 
+# Team Templates
+try:
+    from ..team_templates import (
+        TeamType,
+        CoordinationStrategy,
+        AgentTemplate,
+        TeamTemplate,
+        TeamLibrary,
+        TeamBuilder,
+        TeamTemplateManager,
+    )
+    TEMPLATES_AVAILABLE = True
+except ImportError:
+    TEMPLATES_AVAILABLE = False
+    TeamType = None
+    CoordinationStrategy = None
+    AgentTemplate = None
+    TeamTemplate = None
+    TeamLibrary = None
+    TeamBuilder = None
+    TeamTemplateManager = None
+
+# Templates API (requires FastAPI)
+try:
+    from .templates_api import router as templates_api_router
+    TEMPLATES_API_AVAILABLE = True
+except ImportError:
+    TEMPLATES_API_AVAILABLE = False
+    templates_api_router = None
+
 __all__ = [
     # Orchestrator
     "TeamOrchestrator",
@@ -241,6 +271,20 @@ __all__ = [
     "TeamState",
     "APIAgentStatus",
     "API_AVAILABLE",
+
+    # Team Templates
+    "TeamType",
+    "CoordinationStrategy",
+    "AgentTemplate",
+    "TeamTemplate",
+    "TeamLibrary",
+    "TeamBuilder",
+    "TeamTemplateManager",
+    "TEMPLATES_AVAILABLE",
+
+    # Templates API
+    "templates_api_router",
+    "TEMPLATES_API_AVAILABLE",
 ]
 
 __version__ = "1.0.0"
