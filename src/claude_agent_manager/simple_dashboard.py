@@ -3681,26 +3681,109 @@ class AgentDashboard:
 
         self.team_output.bind("<Button-3>", show_context_menu)
 
-        # Right: Roles
-        right = tk.Frame(content, bg=t["btn_bg"], width=280)
+        # Right: Roles with colors and MCP info
+        right = tk.Frame(content, bg=t["btn_bg"], width=300)
         right.pack(side=tk.RIGHT, fill=tk.Y)
         right.pack_propagate(False)
 
-        tk.Label(right, text="Agent Roles", font=("Segoe UI Semibold", 11),
-                 bg=t["btn_bg"], fg=t["fg"]).pack(fill=tk.X, padx=12, pady=(12, 8))
+        # Scrollable roles panel
+        roles_header = tk.Frame(right, bg=t["btn_bg"])
+        roles_header.pack(fill=tk.X, padx=12, pady=(12, 4))
 
-        for role, desc, deps in [
-            ("Architect", "Design architecture, APIs", "-"),
-            ("Backend", "Server-side logic", "Architect"),
-            ("Frontend", "UI components", "Architect, Backend"),
-            ("QA", "Tests, quality", "Backend, Frontend"),
-            ("Reviewer", "Code review", "QA"),
-        ]:
-            rf = tk.Frame(right, bg=t["btn_bg"])
-            rf.pack(fill=tk.X, padx=12, pady=4)
-            tk.Label(rf, text=role, font=("Segoe UI Semibold", 9), bg=t["btn_bg"], fg=t["accent"]).pack(anchor="w")
-            tk.Label(rf, text=desc, font=("Segoe UI", 8), bg=t["btn_bg"], fg=t["fg"]).pack(anchor="w")
-            tk.Label(rf, text=f"Waits: {deps}", font=("Segoe UI", 8), bg=t["btn_bg"], fg=t["fg_dim"]).pack(anchor="w")
+        tk.Label(roles_header, text="Agent Roles", font=("Segoe UI Semibold", 11),
+                 bg=t["btn_bg"], fg=t["fg"]).pack(side=tk.LEFT)
+
+        # Canvas for scrolling
+        roles_canvas = tk.Canvas(right, bg=t["btn_bg"], highlightthickness=0)
+        roles_scrollbar = tk.Scrollbar(right, orient="vertical", command=roles_canvas.yview)
+        roles_scrollable = tk.Frame(roles_canvas, bg=t["btn_bg"])
+
+        roles_scrollable.bind(
+            "<Configure>",
+            lambda e: roles_canvas.configure(scrollregion=roles_canvas.bbox("all"))
+        )
+
+        roles_canvas.create_window((0, 0), window=roles_scrollable, anchor="nw")
+        roles_canvas.configure(yscrollcommand=roles_scrollbar.set)
+
+        roles_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 0))
+        roles_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Role definitions with colors (from api.py PREDEFINED_ROLES)
+        roles_data = [
+            ("Architect", "System architecture & API design", "#8B5CF6", ["memory", "fs"], "-"),
+            ("Backend", "Server-side logic & APIs", "#10B981", ["memory", "fs", "git"], "Architect"),
+            ("Frontend", "React/TypeScript UI", "#F59E0B", ["memory", "fs"], "Backend"),
+            ("Telegram", "Bot handlers (aiogram)", "#0EA5E9", ["memory", "fs"], "Backend"),
+            ("Database", "Schema & migrations", "#6366F1", ["memory", "db"], "Architect"),
+            ("QA", "Tests & quality assurance", "#EF4444", ["memory", "fs"], "Backend"),
+            ("Security", "OWASP security audit", "#DC2626", ["memory"], "Backend"),
+            ("Reviewer", "Code review & approval", "#EC4899", ["memory"], "QA"),
+            ("DevOps", "Docker & K8s configs", "#059669", ["memory", "fs"], "All"),
+        ]
+
+        self.role_checkboxes = {}
+
+        for role, desc, color, mcp, deps in roles_data:
+            rf = tk.Frame(roles_scrollable, bg=t["btn_bg"], pady=4)
+            rf.pack(fill=tk.X)
+
+            # Color indicator bar
+            color_bar = tk.Frame(rf, bg=color, width=4)
+            color_bar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+
+            # Content frame
+            role_content = tk.Frame(rf, bg=t["btn_bg"])
+            role_content.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            # Role name with checkbox
+            role_header = tk.Frame(role_content, bg=t["btn_bg"])
+            role_header.pack(fill=tk.X)
+
+            # Default enabled: Architect, Backend, QA
+            var = tk.BooleanVar(value=role in ["Architect", "Backend", "QA"])
+            cb = tk.Checkbutton(role_header, variable=var, bg=t["btn_bg"],
+                               activebackground=t["btn_bg"], highlightthickness=0)
+            cb.pack(side=tk.LEFT)
+            self.role_checkboxes[role.lower()] = var
+
+            tk.Label(role_header, text=role, font=("Segoe UI Semibold", 9),
+                    bg=t["btn_bg"], fg=color).pack(side=tk.LEFT)
+
+            # Description
+            tk.Label(role_content, text=desc, font=("Segoe UI", 8),
+                    bg=t["btn_bg"], fg=t["fg"]).pack(anchor="w", padx=(20, 0))
+
+            # MCP permissions (small pills)
+            mcp_frame = tk.Frame(role_content, bg=t["btn_bg"])
+            mcp_frame.pack(anchor="w", padx=(20, 0), pady=(2, 0))
+
+            for perm in mcp:
+                pill = tk.Label(mcp_frame, text=perm, font=("Segoe UI", 7),
+                               bg=t["bg"], fg=t["fg_dim"], padx=4, pady=1)
+                pill.pack(side=tk.LEFT, padx=(0, 4))
+
+            # Dependencies
+            if deps != "-":
+                tk.Label(role_content, text=f"-> {deps}", font=("Segoe UI", 7),
+                        bg=t["btn_bg"], fg=t["fg_dim"]).pack(anchor="w", padx=(20, 0))
+
+        # Separator
+        tk.Frame(roles_scrollable, bg=t["separator"], height=1).pack(fill=tk.X, pady=8)
+
+        # Graph Memory toggle
+        gm_frame = tk.Frame(roles_scrollable, bg=t["btn_bg"])
+        gm_frame.pack(fill=tk.X, pady=4)
+
+        self.use_graph_memory = tk.BooleanVar(value=True)
+        gm_cb = tk.Checkbutton(gm_frame, text="Graph Memory",
+                               variable=self.use_graph_memory,
+                               font=("Segoe UI", 9), bg=t["btn_bg"], fg=t["fg"],
+                               activebackground=t["btn_bg"], highlightthickness=0)
+        gm_cb.pack(side=tk.LEFT)
+
+        tk.Label(gm_frame, text="MCP", font=("Segoe UI", 8),
+                bg=t["accent"], fg="#fff", padx=4).pack(side=tk.LEFT, padx=(4, 0))
 
     def _team_browse_folder(self):
         from tkinter import filedialog
@@ -3725,20 +3808,42 @@ class AgentDashboard:
         except tk.TclError:
             pass
 
+    def _get_selected_roles(self):
+        """Get list of selected agent roles."""
+        selected = []
+        if hasattr(self, 'role_checkboxes'):
+            for role, var in self.role_checkboxes.items():
+                if var.get():
+                    selected.append(role)
+        return selected if selected else ["architect", "backend", "qa"]
+
     def _team_run(self):
         task = self.team_task_text.get("1.0", tk.END).strip()
         project = self.team_path_entry.get().strip()
         if not task:
             self._team_log("[ERROR] Task is empty")
             return
-        self._team_log(f"[TEAM] Starting: {task[:50]}...")
+
+        selected_roles = self._get_selected_roles()
+        use_graph = self.use_graph_memory.get() if hasattr(self, 'use_graph_memory') else True
+
+        self._team_log(f"[TEAM] Starting with roles: {', '.join(selected_roles)}")
+        self._team_log(f"[TEAM] Graph Memory: {'ON' if use_graph else 'OFF'}")
+        self._team_log(f"[TEAM] Task: {task[:50]}...")
+
         import threading
         def run():
             try:
                 import subprocess
+                cmd = [
+                    "python", "-m", "claude_agent_manager.cli", "team", "run",
+                    task, "--project", project,
+                    "--roles", ",".join(selected_roles)
+                ]
                 result = subprocess.run(
-                    ["python", "-m", "claude_agent_manager.cli", "team", "run", task, "--project", project],
-                    capture_output=True, text=True, timeout=300, cwd=str(Path(__file__).parent.parent.parent)
+                    cmd,
+                    capture_output=True, text=True, timeout=300,
+                    cwd=str(Path(__file__).parent.parent.parent)
                 )
                 self.root.after(0, lambda: self._team_log(result.stdout or result.stderr or "[DONE]"))
             except Exception as e:

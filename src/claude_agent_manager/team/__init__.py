@@ -106,6 +106,54 @@ except ImportError:
     AutoGenTeam = None
     TeamPresets = None
 
+# Enhanced orchestrator with MCP and Graph Memory
+try:
+    from .enhanced_orchestrator import (
+        EnhancedTeamOrchestrator,
+        EnhancedAgent,
+        AgentConfig as EnhancedAgentConfig,
+    )
+    ENHANCED_AVAILABLE = True
+except ImportError:
+    ENHANCED_AVAILABLE = False
+    EnhancedTeamOrchestrator = None
+    EnhancedAgent = None
+    EnhancedAgentConfig = None
+
+# Team Manager with dashboard integration
+try:
+    from .team_manager import (
+        TeamManager,
+        AgentRole,
+        AgentStack,
+        MCPPermission,
+        WorkGraphMemory,
+    )
+    TEAM_MANAGER_AVAILABLE = True
+except ImportError:
+    TEAM_MANAGER_AVAILABLE = False
+    TeamManager = None
+    AgentRole = None
+    AgentStack = None
+    MCPPermission = None
+    WorkGraphMemory = None
+
+# REST API (requires FastAPI)
+try:
+    from .api import (
+        router as team_api_router,
+        PREDEFINED_ROLES,
+        TeamState,
+        AgentStatus as APIAgentStatus,
+    )
+    API_AVAILABLE = True
+except ImportError:
+    API_AVAILABLE = False
+    team_api_router = None
+    PREDEFINED_ROLES = None
+    TeamState = None
+    APIAgentStatus = None
+
 __all__ = [
     # Orchestrator
     "TeamOrchestrator",
@@ -172,6 +220,27 @@ __all__ = [
     "AutoGenTeam",
     "TeamPresets",
     "AUTOGEN_AVAILABLE",
+
+    # Enhanced orchestrator
+    "EnhancedTeamOrchestrator",
+    "EnhancedAgent",
+    "EnhancedAgentConfig",
+    "ENHANCED_AVAILABLE",
+
+    # Team Manager
+    "TeamManager",
+    "AgentRole",
+    "AgentStack",
+    "MCPPermission",
+    "WorkGraphMemory",
+    "TEAM_MANAGER_AVAILABLE",
+
+    # REST API
+    "team_api_router",
+    "PREDEFINED_ROLES",
+    "TeamState",
+    "APIAgentStatus",
+    "API_AVAILABLE",
 ]
 
 __version__ = "1.0.0"
