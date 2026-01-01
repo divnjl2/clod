@@ -732,6 +732,8 @@ def create_agent(
                 agent.config.system_prompt = config["system_prompt"]
                 # Also update the direct attribute used in API calls
                 agent.system_prompt = config["system_prompt"]
+            if "mcp_tools" in config:
+                agent.config.mcp_tools = config["mcp_tools"]
 
     return agent
 
