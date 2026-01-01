@@ -3834,6 +3834,44 @@ class AgentDashboard:
         tk.Label(gm_frame, text="MCP", font=("Segoe UI", 7),
                 bg=t["accent"], fg="#fff", padx=4, pady=1).pack(side=tk.LEFT, padx=(6, 0))
 
+        # Separator
+        tk.Frame(roles_scrollable, bg=t["separator"], height=1).pack(fill=tk.X, pady=(8, 8))
+
+        # Reasoning Pattern selector
+        rp_label = tk.Label(roles_scrollable, text="Reasoning Pattern", font=("Segoe UI Semibold", 9),
+                           bg=t["btn_bg"], fg=t["fg"])
+        rp_label.pack(anchor="w", pady=(0, 4))
+        rp_label.bind("<MouseWheel>", on_mousewheel)
+
+        # Pattern options with descriptions
+        self.reasoning_patterns = {
+            "auto": ("Auto", "Auto-select based on task"),
+            "cot": ("Chain-of-Thought", "Step-by-step reasoning"),
+            "tot": ("Tree-of-Thoughts", "Multiple approaches"),
+            "reflection": ("Reflection", "Self-critique & improve"),
+            "self_consistency": ("Self-Consistency", "Multiple attempts"),
+            "react": ("ReAct", "Reason + Act cycle"),
+        }
+
+        self.selected_reasoning = tk.StringVar(value="auto")
+
+        for pattern_id, (name, desc) in self.reasoning_patterns.items():
+            rf = tk.Frame(roles_scrollable, bg=t["btn_bg"])
+            rf.pack(fill=tk.X, pady=2)
+            rf.bind("<MouseWheel>", on_mousewheel)
+
+            rb = tk.Radiobutton(
+                rf, text=name, variable=self.selected_reasoning, value=pattern_id,
+                font=("Segoe UI", 9), bg=t["btn_bg"], fg=t["fg"],
+                activebackground=t["btn_bg"], selectcolor=t["bg"],
+                highlightthickness=0
+            )
+            rb.pack(side=tk.LEFT)
+            rb.bind("<MouseWheel>", on_mousewheel)
+
+            tk.Label(rf, text=f"- {desc}", font=("Segoe UI", 8),
+                    bg=t["btn_bg"], fg=t["fg_dim"]).pack(side=tk.LEFT, padx=(4, 0))
+
     def _team_browse_folder(self):
         from tkinter import filedialog
         folder = filedialog.askdirectory()
@@ -3866,6 +3904,12 @@ class AgentDashboard:
                     selected.append(role)
         return selected if selected else ["architect", "backend", "qa"]
 
+    def _get_reasoning_pattern(self):
+        """Get selected reasoning pattern."""
+        if hasattr(self, 'selected_reasoning'):
+            return self.selected_reasoning.get()
+        return "auto"
+
     def _team_run(self):
         task = self.team_task_text.get("1.0", tk.END).strip()
         project = self.team_path_entry.get().strip() or "."
@@ -3875,8 +3919,19 @@ class AgentDashboard:
 
         selected_roles = self._get_selected_roles()
         use_graph = self.use_graph_memory.get() if hasattr(self, 'use_graph_memory') else True
+        reasoning_pattern = self._get_reasoning_pattern()
+
+        pattern_names = {
+            "auto": "Auto-select",
+            "cot": "Chain-of-Thought",
+            "tot": "Tree-of-Thoughts",
+            "reflection": "Reflection",
+            "self_consistency": "Self-Consistency",
+            "react": "ReAct"
+        }
 
         self._team_log(f"[TEAM] Starting with roles: {', '.join(selected_roles)}")
+        self._team_log(f"[TEAM] Reasoning: {pattern_names.get(reasoning_pattern, reasoning_pattern)}")
         self._team_log(f"[TEAM] Graph Memory: {'ON' if use_graph else 'OFF'}")
         self._team_log(f"[TEAM] Task: {task[:60]}...")
 
@@ -3886,8 +3941,10 @@ class AgentDashboard:
                 import asyncio
                 try:
                     from .team import TeamOrchestrator, create_agent
+                    from .advanced_reasoning import AdvancedReasoningEngine, ReasoningPattern
                 except ImportError:
                     from claude_agent_manager.team import TeamOrchestrator, create_agent
+                    from claude_agent_manager.advanced_reasoning import AdvancedReasoningEngine, ReasoningPattern
 
                 self.root.after(0, lambda: self._team_log("[TEAM] Initializing orchestrator..."))
 
