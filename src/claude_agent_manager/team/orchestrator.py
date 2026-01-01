@@ -103,9 +103,17 @@ class TeamOrchestrator:
         self.auto_merge = auto_merge
         self.use_quality_gates = quality_gates
 
-        # Git операции
-        self.git = GitOperations(self.project_path)
-        self.base_branch = self.git.get_base_branch()
+        # Check if git repo exists
+        self.is_git_repo = (self.project_path / ".git").exists()
+
+        # Git операции (только если это git репозиторий)
+        if self.is_git_repo:
+            self.git = GitOperations(self.project_path)
+            self.base_branch = self.git.get_base_branch()
+        else:
+            self.git = None
+            self.base_branch = None
+            console.print("[yellow]Note: Not a git repository. Working in local mode (no worktrees/branches).[/yellow]")
 
         # Shared context
         context_dir = self.project_path / ".claude-team"
@@ -310,7 +318,11 @@ Output ONLY valid JSON, no explanations."""
 
         # Считаем файлы
         try:
-            analysis["files_count"] = len(self.git.get_tracked_files())
+            if self.is_git_repo and self.git:
+                analysis["files_count"] = len(self.git.get_tracked_files())
+            else:
+                # Count files manually for non-git repos
+                analysis["files_count"] = sum(1 for _ in self.project_path.rglob("*") if _.is_file())
         except Exception:
             pass
 
@@ -342,7 +354,13 @@ Output ONLY valid JSON, no explanations."""
     # =========================================================================
 
     def setup_worktree(self, task: Task) -> Path:
-        """Создать worktree для задачи."""
+        """Создать worktree для задачи (или работать локально если не git repo)."""
+        # Если не git репозиторий - работаем прямо в project_path
+        if not self.is_git_repo or not self.git:
+            task.worktree_path = self.project_path
+            task.branch = None
+            return self.project_path
+
         worktree_dir = self.project_path / ".worktrees"
         worktree_dir.mkdir(exist_ok=True)
 
@@ -367,6 +385,9 @@ Output ONLY valid JSON, no explanations."""
 
     def cleanup_worktrees(self):
         """Очистить worktrees."""
+        if not self.is_git_repo or not self.git:
+            return  # Нечего чистить в локальном режиме
+
         for task_id, path in self.worktrees.items():
             try:
                 self.git.remove_worktree(path)
@@ -610,6 +631,11 @@ Output ONLY valid JSON, no explanations."""
     async def merge_all_branches(self):
         """Мержинг всех веток агентов."""
         if not self.plan:
+            return
+
+        # В локальном режиме нечего мержить
+        if not self.is_git_repo or not self.git:
+            console.print("[yellow]Local mode: No branches to merge[/yellow]")
             return
 
         console.print("\n[cyan]Merging agent branches...[/cyan]")

@@ -3681,109 +3681,158 @@ class AgentDashboard:
 
         self.team_output.bind("<Button-3>", show_context_menu)
 
-        # Right: Roles with colors and MCP info
-        right = tk.Frame(content, bg=t["btn_bg"], width=300)
-        right.pack(side=tk.RIGHT, fill=tk.Y)
+        # Right: Roles panel with custom toggles
+        right = tk.Frame(content, bg=t["btn_bg"], width=260)
+        right.pack(side=tk.RIGHT, fill=tk.BOTH)
         right.pack_propagate(False)
 
-        # Scrollable roles panel
+        # Header
         roles_header = tk.Frame(right, bg=t["btn_bg"])
-        roles_header.pack(fill=tk.X, padx=12, pady=(12, 4))
+        roles_header.pack(fill=tk.X, padx=12, pady=(12, 8))
 
         tk.Label(roles_header, text="Agent Roles", font=("Segoe UI Semibold", 11),
                  bg=t["btn_bg"], fg=t["fg"]).pack(side=tk.LEFT)
 
-        # Canvas for scrolling
-        roles_canvas = tk.Canvas(right, bg=t["btn_bg"], highlightthickness=0)
-        roles_scrollbar = tk.Scrollbar(right, orient="vertical", command=roles_canvas.yview)
+        # Scrollable canvas
+        roles_canvas = tk.Canvas(right, bg=t["btn_bg"], highlightthickness=0, width=236)
+        roles_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 4))
+
         roles_scrollable = tk.Frame(roles_canvas, bg=t["btn_bg"])
+        canvas_window = roles_canvas.create_window((0, 0), window=roles_scrollable, anchor="nw", width=232)
 
-        roles_scrollable.bind(
-            "<Configure>",
-            lambda e: roles_canvas.configure(scrollregion=roles_canvas.bbox("all"))
-        )
+        def on_frame_configure(e):
+            roles_canvas.configure(scrollregion=roles_canvas.bbox("all"))
 
-        roles_canvas.create_window((0, 0), window=roles_scrollable, anchor="nw")
-        roles_canvas.configure(yscrollcommand=roles_scrollbar.set)
+        def on_canvas_configure(e):
+            roles_canvas.itemconfig(canvas_window, width=e.width - 4)
 
-        roles_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 0))
-        roles_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        roles_scrollable.bind("<Configure>", on_frame_configure)
+        roles_canvas.bind("<Configure>", on_canvas_configure)
 
-        # Role definitions with colors (from api.py PREDEFINED_ROLES)
+        # Mouse wheel scrolling
+        def on_mousewheel(e):
+            roles_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        roles_canvas.bind("<MouseWheel>", on_mousewheel)
+        roles_scrollable.bind("<MouseWheel>", on_mousewheel)
+
+        # Role definitions with colors
         roles_data = [
-            ("Architect", "System architecture & API design", "#8B5CF6", ["memory", "fs"], "-"),
-            ("Backend", "Server-side logic & APIs", "#10B981", ["memory", "fs", "git"], "Architect"),
+            ("Architect", "System design & APIs", "#8B5CF6", ["memory", "fs"], None),
+            ("Backend", "Server-side logic", "#10B981", ["memory", "fs", "git"], "Architect"),
             ("Frontend", "React/TypeScript UI", "#F59E0B", ["memory", "fs"], "Backend"),
-            ("Telegram", "Bot handlers (aiogram)", "#0EA5E9", ["memory", "fs"], "Backend"),
+            ("Telegram", "Bot handlers", "#0EA5E9", ["memory", "fs"], "Backend"),
             ("Database", "Schema & migrations", "#6366F1", ["memory", "db"], "Architect"),
-            ("QA", "Tests & quality assurance", "#EF4444", ["memory", "fs"], "Backend"),
-            ("Security", "OWASP security audit", "#DC2626", ["memory"], "Backend"),
-            ("Reviewer", "Code review & approval", "#EC4899", ["memory"], "QA"),
-            ("DevOps", "Docker & K8s configs", "#059669", ["memory", "fs"], "All"),
+            ("QA", "Tests & quality", "#EF4444", ["memory", "fs"], "Backend"),
+            ("Security", "OWASP audit", "#DC2626", ["memory"], "Backend"),
+            ("Reviewer", "Code review", "#EC4899", ["memory"], "QA"),
+            ("DevOps", "Docker & K8s", "#059669", ["memory", "fs"], "All"),
         ]
 
         self.role_checkboxes = {}
+        self.role_toggles = {}
+
+        def create_toggle(parent, var, color, bg_color):
+            """Create custom toggle switch."""
+            toggle_frame = tk.Frame(parent, bg=bg_color, width=32, height=16)
+            toggle_frame.pack_propagate(False)
+
+            # Track and knob
+            track_color = color if var.get() else t["bg"]
+            track = tk.Frame(toggle_frame, bg=track_color, height=14)
+            track.place(x=0, y=1, width=32, height=14)
+
+            knob_x = 17 if var.get() else 1
+            knob = tk.Frame(toggle_frame, bg="#fff", width=12, height=12)
+            knob.place(x=knob_x, y=2)
+
+            def toggle_click(e=None):
+                new_val = not var.get()
+                var.set(new_val)
+                track.configure(bg=color if new_val else t["bg"])
+                knob.place(x=17 if new_val else 1, y=2)
+
+            toggle_frame.bind("<Button-1>", toggle_click)
+            track.bind("<Button-1>", toggle_click)
+            knob.bind("<Button-1>", toggle_click)
+
+            return toggle_frame
 
         for role, desc, color, mcp, deps in roles_data:
-            rf = tk.Frame(roles_scrollable, bg=t["btn_bg"], pady=4)
-            rf.pack(fill=tk.X)
+            # Role card
+            rf = tk.Frame(roles_scrollable, bg=t["btn_bg"], pady=6)
+            rf.pack(fill=tk.X, padx=(0, 4))
+            rf.bind("<MouseWheel>", on_mousewheel)
 
-            # Color indicator bar
-            color_bar = tk.Frame(rf, bg=color, width=4)
+            # Left color bar
+            color_bar = tk.Frame(rf, bg=color, width=3)
             color_bar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
 
-            # Content frame
+            # Content
             role_content = tk.Frame(rf, bg=t["btn_bg"])
             role_content.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            role_content.bind("<MouseWheel>", on_mousewheel)
 
-            # Role name with checkbox
+            # Header row with toggle
             role_header = tk.Frame(role_content, bg=t["btn_bg"])
             role_header.pack(fill=tk.X)
+            role_header.bind("<MouseWheel>", on_mousewheel)
 
             # Default enabled: Architect, Backend, QA
             var = tk.BooleanVar(value=role in ["Architect", "Backend", "QA"])
-            cb = tk.Checkbutton(role_header, variable=var, bg=t["btn_bg"],
-                               activebackground=t["btn_bg"], highlightthickness=0)
-            cb.pack(side=tk.LEFT)
             self.role_checkboxes[role.lower()] = var
 
-            tk.Label(role_header, text=role, font=("Segoe UI Semibold", 9),
-                    bg=t["btn_bg"], fg=color).pack(side=tk.LEFT)
+            # Custom toggle
+            toggle = create_toggle(role_header, var, color, t["btn_bg"])
+            toggle.pack(side=tk.LEFT, padx=(0, 6))
+
+            # Role name
+            name_lbl = tk.Label(role_header, text=role, font=("Segoe UI Semibold", 9),
+                               bg=t["btn_bg"], fg=color, cursor="hand2")
+            name_lbl.pack(side=tk.LEFT)
+            name_lbl.bind("<MouseWheel>", on_mousewheel)
 
             # Description
-            tk.Label(role_content, text=desc, font=("Segoe UI", 8),
-                    bg=t["btn_bg"], fg=t["fg"]).pack(anchor="w", padx=(20, 0))
+            desc_lbl = tk.Label(role_content, text=desc, font=("Segoe UI", 8),
+                               bg=t["btn_bg"], fg=t["fg_dim"])
+            desc_lbl.pack(anchor="w", padx=(38, 0))
+            desc_lbl.bind("<MouseWheel>", on_mousewheel)
 
-            # MCP permissions (small pills)
+            # MCP pills row
             mcp_frame = tk.Frame(role_content, bg=t["btn_bg"])
-            mcp_frame.pack(anchor="w", padx=(20, 0), pady=(2, 0))
+            mcp_frame.pack(anchor="w", padx=(38, 0), pady=(2, 0))
+            mcp_frame.bind("<MouseWheel>", on_mousewheel)
 
             for perm in mcp:
                 pill = tk.Label(mcp_frame, text=perm, font=("Segoe UI", 7),
-                               bg=t["bg"], fg=t["fg_dim"], padx=4, pady=1)
-                pill.pack(side=tk.LEFT, padx=(0, 4))
+                               bg=t["bg"], fg=t["fg_dim"], padx=4, pady=0)
+                pill.pack(side=tk.LEFT, padx=(0, 3))
+                pill.bind("<MouseWheel>", on_mousewheel)
 
-            # Dependencies
-            if deps != "-":
-                tk.Label(role_content, text=f"-> {deps}", font=("Segoe UI", 7),
-                        bg=t["btn_bg"], fg=t["fg_dim"]).pack(anchor="w", padx=(20, 0))
+            # Dependency arrow
+            if deps:
+                dep_lbl = tk.Label(role_content, text=f"-> {deps}", font=("Segoe UI", 7),
+                                  bg=t["btn_bg"], fg=t["separator"])
+                dep_lbl.pack(anchor="w", padx=(38, 0))
+                dep_lbl.bind("<MouseWheel>", on_mousewheel)
 
         # Separator
-        tk.Frame(roles_scrollable, bg=t["separator"], height=1).pack(fill=tk.X, pady=8)
+        tk.Frame(roles_scrollable, bg=t["separator"], height=1).pack(fill=tk.X, pady=(12, 8))
 
         # Graph Memory toggle
         gm_frame = tk.Frame(roles_scrollable, bg=t["btn_bg"])
-        gm_frame.pack(fill=tk.X, pady=4)
+        gm_frame.pack(fill=tk.X, pady=(0, 8))
+        gm_frame.bind("<MouseWheel>", on_mousewheel)
 
         self.use_graph_memory = tk.BooleanVar(value=True)
-        gm_cb = tk.Checkbutton(gm_frame, text="Graph Memory",
-                               variable=self.use_graph_memory,
-                               font=("Segoe UI", 9), bg=t["btn_bg"], fg=t["fg"],
-                               activebackground=t["btn_bg"], highlightthickness=0)
-        gm_cb.pack(side=tk.LEFT)
+        gm_toggle = create_toggle(gm_frame, self.use_graph_memory, t["accent"], t["btn_bg"])
+        gm_toggle.pack(side=tk.LEFT, padx=(0, 8))
 
-        tk.Label(gm_frame, text="MCP", font=("Segoe UI", 8),
-                bg=t["accent"], fg="#fff", padx=4).pack(side=tk.LEFT, padx=(4, 0))
+        tk.Label(gm_frame, text="Graph Memory", font=("Segoe UI", 9),
+                bg=t["btn_bg"], fg=t["fg"]).pack(side=tk.LEFT)
+
+        tk.Label(gm_frame, text="MCP", font=("Segoe UI", 7),
+                bg=t["accent"], fg="#fff", padx=4, pady=1).pack(side=tk.LEFT, padx=(6, 0))
 
     def _team_browse_folder(self):
         from tkinter import filedialog
@@ -3819,7 +3868,7 @@ class AgentDashboard:
 
     def _team_run(self):
         task = self.team_task_text.get("1.0", tk.END).strip()
-        project = self.team_path_entry.get().strip()
+        project = self.team_path_entry.get().strip() or "."
         if not task:
             self._team_log("[ERROR] Task is empty")
             return
@@ -3829,61 +3878,146 @@ class AgentDashboard:
 
         self._team_log(f"[TEAM] Starting with roles: {', '.join(selected_roles)}")
         self._team_log(f"[TEAM] Graph Memory: {'ON' if use_graph else 'OFF'}")
-        self._team_log(f"[TEAM] Task: {task[:50]}...")
+        self._team_log(f"[TEAM] Task: {task[:60]}...")
 
         import threading
         def run():
             try:
-                import subprocess
-                cmd = [
-                    "python", "-m", "claude_agent_manager.cli", "team", "run",
-                    task, "--project", project,
-                    "--roles", ",".join(selected_roles)
-                ]
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True, text=True, timeout=300,
-                    cwd=str(Path(__file__).parent.parent.parent)
-                )
-                self.root.after(0, lambda: self._team_log(result.stdout or result.stderr or "[DONE]"))
+                import asyncio
+                try:
+                    from .team import TeamOrchestrator, create_agent
+                except ImportError:
+                    from claude_agent_manager.team import TeamOrchestrator, create_agent
+
+                self.root.after(0, lambda: self._team_log("[TEAM] Initializing orchestrator..."))
+
+                orchestrator = TeamOrchestrator(Path(project).resolve())
+
+                # Add selected agents
+                for role in selected_roles:
+                    agent = create_agent(role, project_path=Path(project).resolve())
+                    orchestrator.agents.append(agent)
+                    self.root.after(0, lambda r=role: self._team_log(f"[TEAM] Added agent: {r}"))
+
+                self.root.after(0, lambda: self._team_log(f"[TEAM] Creating plan for: {task[:40]}..."))
+
+                # Create and execute plan
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    plan = loop.run_until_complete(orchestrator.create_plan(task))
+                    self.root.after(0, lambda: self._team_log(f"[TEAM] Plan created with {len(plan.tasks)} tasks"))
+
+                    for t in plan.tasks:
+                        self.root.after(0, lambda t=t: self._team_log(f"  - {t.name}: {t.description[:50]}"))
+
+                    self.root.after(0, lambda: self._team_log("[TEAM] Executing plan..."))
+                    result = loop.run_until_complete(orchestrator.execute_plan())
+                    self.root.after(0, lambda: self._team_log(f"[DONE] Execution completed!"))
+                finally:
+                    loop.close()
+
             except Exception as e:
-                self.root.after(0, lambda: self._team_log(f"[ERROR] {e}"))
+                import traceback
+                err_msg = str(e)
+                tb = traceback.format_exc()
+                self.root.after(0, lambda m=err_msg: self._team_log(f"[ERROR] {m}"))
+                self.root.after(0, lambda t=tb: self._team_log(t))
+
         threading.Thread(target=run, daemon=True).start()
 
     def _team_plan(self):
         task = self.team_task_text.get("1.0", tk.END).strip()
-        project = self.team_path_entry.get().strip()
+        project = self.team_path_entry.get().strip() or "."
         if not task:
             self._team_log("[ERROR] Task is empty")
             return
-        self._team_log(f"[PLAN] Creating plan...")
+
+        selected_roles = self._get_selected_roles()
+        self._team_log(f"[PLAN] Creating plan for: {task[:60]}...")
+        self._team_log(f"[PLAN] Roles: {', '.join(selected_roles)}")
+
         import threading
         def run():
             try:
-                import subprocess
-                result = subprocess.run(
-                    ["python", "-m", "claude_agent_manager.cli", "team", "plan", task, "--project", project],
-                    capture_output=True, text=True, timeout=60, cwd=str(Path(__file__).parent.parent.parent)
-                )
-                self.root.after(0, lambda: self._team_log(result.stdout or result.stderr or "[DONE]"))
+                import asyncio
+                try:
+                    from .team import TeamOrchestrator, create_agent
+                except ImportError:
+                    from claude_agent_manager.team import TeamOrchestrator, create_agent
+
+                orchestrator = TeamOrchestrator(Path(project).resolve())
+
+                # Add selected agents
+                for role in selected_roles:
+                    agent = create_agent(role, project_path=Path(project).resolve())
+                    orchestrator.agents.append(agent)
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    plan = loop.run_until_complete(orchestrator.create_plan(task))
+
+                    self.root.after(0, lambda: self._team_log(f"\n[PLAN] Generated {len(plan.tasks)} tasks:\n"))
+
+                    for i, t in enumerate(plan.tasks, 1):
+                        self.root.after(0, lambda i=i, t=t: self._team_log(
+                            f"{i}. [{t.assigned_role}] {t.name}\n"
+                            f"   {t.description[:80]}...\n"
+                            f"   Dependencies: {', '.join(t.depends_on) or 'None'}\n"
+                        ))
+
+                    self.root.after(0, lambda: self._team_log("[PLAN] Done!"))
+                finally:
+                    loop.close()
+
             except Exception as e:
-                self.root.after(0, lambda: self._team_log(f"[ERROR] {e}"))
+                err_msg = str(e)
+                self.root.after(0, lambda m=err_msg: self._team_log(f"[ERROR] {m}"))
+
         threading.Thread(target=run, daemon=True).start()
 
     def _team_quality(self):
-        project = self.team_path_entry.get().strip()
+        project = self.team_path_entry.get().strip() or "."
         self._team_log(f"[QUALITY] Checking: {project}")
+
         import threading
         def run():
             try:
-                import subprocess
-                result = subprocess.run(
-                    ["python", "-m", "claude_agent_manager.cli", "team", "quality", "--project", project],
-                    capture_output=True, text=True, timeout=120, cwd=str(Path(__file__).parent.parent.parent)
-                )
-                self.root.after(0, lambda: self._team_log(result.stdout or result.stderr or "[DONE]"))
+                try:
+                    from .team import QualityGates
+                except ImportError:
+                    from claude_agent_manager.team import QualityGates
+
+                self.root.after(0, lambda: self._team_log("[QUALITY] Running checks..."))
+
+                gates = QualityGates(Path(project).resolve())
+
+                # Run linting
+                self.root.after(0, lambda: self._team_log("[QUALITY] Linting..."))
+                lint_ok = gates.run_linting()
+                self.root.after(0, lambda: self._team_log(f"  Lint: {'PASS' if lint_ok else 'FAIL'}"))
+
+                # Run type checking
+                self.root.after(0, lambda: self._team_log("[QUALITY] Type checking..."))
+                type_ok = gates.run_type_check()
+                self.root.after(0, lambda: self._team_log(f"  Types: {'PASS' if type_ok else 'FAIL'}"))
+
+                # Run security scan
+                self.root.after(0, lambda: self._team_log("[QUALITY] Security scan..."))
+                sec_ok = gates.run_security_scan()
+                self.root.after(0, lambda: self._team_log(f"  Security: {'PASS' if sec_ok else 'FAIL'}"))
+
+                # Summary
+                all_ok = lint_ok and type_ok and sec_ok
+                self.root.after(0, lambda: self._team_log(
+                    f"\n[QUALITY] {'ALL CHECKS PASSED' if all_ok else 'SOME CHECKS FAILED'}"
+                ))
+
             except Exception as e:
-                self.root.after(0, lambda: self._team_log(f"[ERROR] {e}"))
+                err_msg = str(e)
+                self.root.after(0, lambda m=err_msg: self._team_log(f"[ERROR] {m}"))
+
         threading.Thread(target=run, daemon=True).start()
 
     def _show_app_settings(self):
