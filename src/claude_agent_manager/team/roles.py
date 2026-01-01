@@ -661,7 +661,9 @@ class RefactoringAgent(BaseAgent):
 def create_agent(
     role: str,
     worktree_path: Optional[Path] = None,
-    shared_context: Optional['SharedContext'] = None
+    shared_context: Optional['SharedContext'] = None,
+    config: Optional[Dict[str, Any]] = None,
+    project_path: Optional[Path] = None
 ) -> BaseAgent:
     """
     Фабрика агентов.
@@ -670,6 +672,8 @@ def create_agent(
         role: Роль агента
         worktree_path: Путь к worktree
         shared_context: Shared context для координации
+        config: Per-agent configuration (model, temperature, system_prompt, etc.)
+        project_path: Project path (alternative to worktree_path)
     """
     agents = {
         "architect": ArchitectAgent,
@@ -678,17 +682,56 @@ def create_agent(
         "qa": QAAgent,
         "reviewer": ReviewerAgent,
         "refactoring": RefactoringAgent,
+        # Additional roles (using BaseAgent with custom config)
+        "telegram": None,
+        "database": None,
+        "security": None,
+        "devops": None,
     }
 
     agent_class = agents.get(role.lower())
 
+    # Use worktree_path or project_path
+    path = worktree_path or project_path
+
+    if agent_class is None:
+        # For roles without specific class, create SimpleAgent with config
+        from .base_agent import SimpleAgent, AgentConfig
+        agent_config = AgentConfig(
+            role=role.lower(),
+            model=config.get("model", "sonnet") if config else "sonnet",
+            temperature=config.get("temperature", 0.7) if config else 0.7,
+            max_tokens=config.get("max_tokens", 4000) if config else 4000,
+            system_prompt=config.get("system_prompt", f"You are a {role} specialist.") if config else None,
+        )
+        return SimpleAgent(
+            config=agent_config,
+            worktree_path=path,
+            shared_context=shared_context
+        )
+
     if not agent_class:
         raise ValueError(f"Unknown role: {role}. Available: {list(agents.keys())}")
 
-    return agent_class(
-        worktree_path=worktree_path,
+    # Create agent with optional config override
+    agent = agent_class(
+        worktree_path=path,
         shared_context=shared_context
     )
+
+    # Apply config overrides if provided
+    if config:
+        if hasattr(agent, 'config'):
+            if "model" in config:
+                agent.config.model = config["model"]
+            if "temperature" in config:
+                agent.config.temperature = config["temperature"]
+            if "max_tokens" in config:
+                agent.config.max_tokens = config["max_tokens"]
+            if "system_prompt" in config:
+                agent.config.system_prompt = config["system_prompt"]
+
+    return agent
 
 
 def get_available_roles() -> List[str]:

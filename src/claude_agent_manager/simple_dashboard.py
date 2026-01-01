@@ -3842,6 +3842,73 @@ class AgentDashboard:
         self.role_checkboxes = {}
         self.role_toggles = {}
 
+        # Per-agent configurations (model, temperature, prompt, etc.)
+        self.agent_configs = {
+            "architect": {
+                "model": "opus",
+                "temperature": 0.5,
+                "max_tokens": 6000,
+                "system_prompt": "You are a senior system architect. Design clean, scalable systems.",
+                "mcp_tools": ["memory", "filesystem"],
+            },
+            "backend": {
+                "model": "sonnet",
+                "temperature": 0.7,
+                "max_tokens": 4000,
+                "system_prompt": "You are a backend developer. Write clean FastAPI/Python code.",
+                "mcp_tools": ["memory", "filesystem", "database"],
+            },
+            "frontend": {
+                "model": "sonnet",
+                "temperature": 0.7,
+                "max_tokens": 4000,
+                "system_prompt": "You are a frontend developer. Write React/TypeScript code.",
+                "mcp_tools": ["memory", "filesystem"],
+            },
+            "telegram": {
+                "model": "sonnet",
+                "temperature": 0.7,
+                "max_tokens": 4000,
+                "system_prompt": "You are a Telegram bot developer using aiogram.",
+                "mcp_tools": ["memory", "filesystem"],
+            },
+            "database": {
+                "model": "sonnet",
+                "temperature": 0.5,
+                "max_tokens": 4000,
+                "system_prompt": "You are a database architect. Design efficient schemas.",
+                "mcp_tools": ["memory", "database"],
+            },
+            "qa": {
+                "model": "sonnet",
+                "temperature": 0.5,
+                "max_tokens": 4000,
+                "system_prompt": "You are a QA engineer. Write comprehensive tests.",
+                "mcp_tools": ["memory", "filesystem", "code_execution"],
+            },
+            "security": {
+                "model": "opus",
+                "temperature": 0.3,
+                "max_tokens": 4000,
+                "system_prompt": "You are a security expert. Audit for OWASP vulnerabilities.",
+                "mcp_tools": ["memory"],
+            },
+            "reviewer": {
+                "model": "sonnet",
+                "temperature": 0.5,
+                "max_tokens": 4000,
+                "system_prompt": "You are a code reviewer. Provide thorough reviews.",
+                "mcp_tools": ["memory"],
+            },
+            "devops": {
+                "model": "sonnet",
+                "temperature": 0.7,
+                "max_tokens": 4000,
+                "system_prompt": "You are a DevOps engineer. Configure Docker, K8s, CI/CD.",
+                "mcp_tools": ["memory", "filesystem"],
+            },
+        }
+
         def create_toggle(parent, var, color, bg_color):
             """Create custom toggle switch."""
             toggle_frame = tk.Frame(parent, bg=bg_color, width=32, height=16)
@@ -3901,6 +3968,19 @@ class AgentDashboard:
                                bg=t["btn_bg"], fg=color, cursor="hand2")
             name_lbl.pack(side=tk.LEFT)
             name_lbl.bind("<MouseWheel>", on_mousewheel)
+
+            # Configure button (gear icon)
+            def make_config_handler(r=role.lower()):
+                def handler(e=None):
+                    self._show_agent_config_popup(r)
+                return handler
+
+            config_btn = tk.Label(role_header, text="\u2699", font=("Segoe UI", 10),
+                                  bg=t["btn_bg"], fg=t["fg_dim"], cursor="hand2")
+            config_btn.pack(side=tk.RIGHT, padx=(0, 4))
+            config_btn.bind("<Button-1>", make_config_handler())
+            config_btn.bind("<Enter>", lambda e, lbl=config_btn: lbl.configure(fg=color))
+            config_btn.bind("<Leave>", lambda e, lbl=config_btn: lbl.configure(fg=t["fg_dim"]))
 
             # Description
             desc_lbl = tk.Label(role_content, text=desc, font=("Segoe UI", 8),
@@ -4065,6 +4145,163 @@ class AgentDashboard:
         # For now, we just update the BooleanVar values and toggles reflect on next build
         pass
 
+    def _show_agent_config_popup(self, role: str):
+        """Show configuration popup for a specific agent."""
+        t = self.colors
+
+        config = self.agent_configs.get(role, {
+            "model": "sonnet",
+            "temperature": 0.7,
+            "max_tokens": 4000,
+            "system_prompt": f"You are a {role} specialist.",
+            "mcp_tools": ["memory", "filesystem"],
+        })
+
+        # Create popup window
+        popup = tk.Toplevel(self.root)
+        popup.title(f"Configure {role.title()} Agent")
+        popup.configure(bg=t["bg"])
+        popup.geometry("500x600")
+        popup.transient(self.root)
+        popup.grab_set()
+
+        # Header
+        header = tk.Frame(popup, bg=t["accent"], height=50)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+        tk.Label(header, text=f"\u2699 {role.title()} Agent Settings",
+                 font=("Segoe UI Semibold", 12), bg=t["accent"], fg="#fff").pack(pady=12)
+
+        # Content frame with scroll
+        content = tk.Frame(popup, bg=t["bg"])
+        content.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
+
+        # Model selection
+        tk.Label(content, text="Model", font=("Segoe UI Semibold", 10),
+                 bg=t["bg"], fg=t["fg"]).pack(anchor="w")
+
+        model_var = tk.StringVar(value=config.get("model", "sonnet"))
+        model_frame = tk.Frame(content, bg=t["bg"])
+        model_frame.pack(fill=tk.X, pady=(4, 12))
+
+        models = [("haiku", "Haiku ($)", "#10B981"),
+                  ("sonnet", "Sonnet ($$)", "#F59E0B"),
+                  ("opus", "Opus ($$$)", "#8B5CF6"),
+                  ("local", "Local (Free)", "#059669")]
+
+        for mid, mname, mcolor in models:
+            rb = tk.Radiobutton(model_frame, text=mname, variable=model_var, value=mid,
+                                font=("Segoe UI", 9), bg=t["bg"], fg=mcolor,
+                                selectcolor=t["btn_bg"], activebackground=t["bg"])
+            rb.pack(side=tk.LEFT, padx=(0, 12))
+
+        # Temperature slider
+        tk.Label(content, text="Temperature", font=("Segoe UI Semibold", 10),
+                 bg=t["bg"], fg=t["fg"]).pack(anchor="w")
+
+        temp_var = tk.DoubleVar(value=config.get("temperature", 0.7))
+        temp_frame = tk.Frame(content, bg=t["bg"])
+        temp_frame.pack(fill=tk.X, pady=(4, 12))
+
+        temp_lbl = tk.Label(temp_frame, text=f"{temp_var.get():.2f}",
+                            font=("Segoe UI", 9), bg=t["bg"], fg=t["fg_dim"], width=5)
+        temp_lbl.pack(side=tk.RIGHT)
+
+        temp_scale = tk.Scale(temp_frame, from_=0, to=1, resolution=0.05,
+                              orient=tk.HORIZONTAL, variable=temp_var,
+                              bg=t["bg"], fg=t["fg"], highlightthickness=0,
+                              troughcolor=t["btn_bg"], showvalue=False,
+                              command=lambda v: temp_lbl.configure(text=f"{float(v):.2f}"))
+        temp_scale.pack(fill=tk.X, side=tk.LEFT, expand=True)
+
+        # Max tokens slider
+        tk.Label(content, text="Max Tokens", font=("Segoe UI Semibold", 10),
+                 bg=t["bg"], fg=t["fg"]).pack(anchor="w")
+
+        tokens_var = tk.IntVar(value=config.get("max_tokens", 4000))
+        tokens_frame = tk.Frame(content, bg=t["bg"])
+        tokens_frame.pack(fill=tk.X, pady=(4, 12))
+
+        tokens_lbl = tk.Label(tokens_frame, text=str(tokens_var.get()),
+                              font=("Segoe UI", 9), bg=t["bg"], fg=t["fg_dim"], width=5)
+        tokens_lbl.pack(side=tk.RIGHT)
+
+        tokens_scale = tk.Scale(tokens_frame, from_=1000, to=8000, resolution=500,
+                                orient=tk.HORIZONTAL, variable=tokens_var,
+                                bg=t["bg"], fg=t["fg"], highlightthickness=0,
+                                troughcolor=t["btn_bg"], showvalue=False,
+                                command=lambda v: tokens_lbl.configure(text=str(int(float(v)))))
+        tokens_scale.pack(fill=tk.X, side=tk.LEFT, expand=True)
+
+        # System prompt
+        tk.Label(content, text="System Prompt", font=("Segoe UI Semibold", 10),
+                 bg=t["bg"], fg=t["fg"]).pack(anchor="w")
+
+        prompt_text = tk.Text(content, font=("Consolas", 9), height=8,
+                              bg=t["btn_bg"], fg=t["fg"], insertbackground=t["fg"],
+                              wrap=tk.WORD, relief=tk.FLAT, padx=8, pady=8)
+        prompt_text.pack(fill=tk.X, pady=(4, 12))
+        prompt_text.insert("1.0", config.get("system_prompt", ""))
+
+        # MCP Tools
+        tk.Label(content, text="MCP Tools", font=("Segoe UI Semibold", 10),
+                 bg=t["bg"], fg=t["fg"]).pack(anchor="w")
+
+        mcp_frame = tk.Frame(content, bg=t["bg"])
+        mcp_frame.pack(fill=tk.X, pady=(4, 12))
+
+        mcp_tools = ["memory", "filesystem", "database", "code_execution",
+                     "web_search", "github", "slack"]
+        mcp_vars = {}
+
+        for i, tool in enumerate(mcp_tools):
+            var = tk.BooleanVar(value=tool in config.get("mcp_tools", []))
+            mcp_vars[tool] = var
+            cb = tk.Checkbutton(mcp_frame, text=tool, variable=var,
+                                font=("Segoe UI", 9), bg=t["bg"], fg=t["fg"],
+                                selectcolor=t["btn_bg"], activebackground=t["bg"])
+            cb.grid(row=i // 4, column=i % 4, sticky="w", padx=(0, 12))
+
+        # Buttons
+        btn_frame = tk.Frame(popup, bg=t["bg"])
+        btn_frame.pack(fill=tk.X, padx=16, pady=16)
+
+        def save_config():
+            self.agent_configs[role] = {
+                "model": model_var.get(),
+                "temperature": temp_var.get(),
+                "max_tokens": tokens_var.get(),
+                "system_prompt": prompt_text.get("1.0", tk.END).strip(),
+                "mcp_tools": [tool for tool, var in mcp_vars.items() if var.get()],
+            }
+            self._team_log(f"[CONFIG] {role.title()} agent configuration saved")
+            popup.destroy()
+
+        def reset_config():
+            model_var.set("sonnet")
+            temp_var.set(0.7)
+            tokens_var.set(4000)
+            prompt_text.delete("1.0", tk.END)
+            prompt_text.insert("1.0", f"You are a {role} specialist.")
+            for var in mcp_vars.values():
+                var.set(False)
+            mcp_vars["memory"].set(True)
+            mcp_vars["filesystem"].set(True)
+
+        tk.Button(btn_frame, text="Reset", font=("Segoe UI", 10),
+                  bg=t["btn_bg"], fg=t["fg"], relief=tk.FLAT,
+                  command=reset_config, padx=16, pady=8).pack(side=tk.LEFT)
+
+        tk.Button(btn_frame, text="Save", font=("Segoe UI Semibold", 10),
+                  bg=t["accent"], fg="#fff", relief=tk.FLAT,
+                  command=save_config, padx=24, pady=8).pack(side=tk.RIGHT)
+
+        # Center popup
+        popup.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 500) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 600) // 2
+        popup.geometry(f"+{x}+{y}")
+
     def _team_log(self, msg: str):
         self.team_output.insert(tk.END, msg + "\n")
         self.team_output.see(tk.END)
@@ -4157,11 +4394,17 @@ class AgentDashboard:
 
                 orchestrator = TeamOrchestrator(Path(project).resolve(), model=selected_model)
 
-                # Add selected agents
+                # Add selected agents with per-agent config
                 for role in selected_roles:
-                    agent = create_agent(role, project_path=Path(project).resolve())
+                    agent_config = self.agent_configs.get(role, {})
+                    agent = create_agent(
+                        role,
+                        project_path=Path(project).resolve(),
+                        config=agent_config
+                    )
                     orchestrator.agents.append(agent)
-                    self.root.after(0, lambda r=role: self._team_log(f"[TEAM] Added agent: {r}"))
+                    model = agent_config.get("model", "sonnet")
+                    self.root.after(0, lambda r=role, m=model: self._team_log(f"[TEAM] Added agent: {r} (model: {m})"))
 
                 self.root.after(0, lambda: self._team_log(f"[TEAM] Creating plan for: {task[:40]}..."))
 
@@ -4214,9 +4457,14 @@ class AgentDashboard:
 
                 orchestrator = TeamOrchestrator(Path(project).resolve(), model=selected_model)
 
-                # Add selected agents
+                # Add selected agents with per-agent config
                 for role in selected_roles:
-                    agent = create_agent(role, project_path=Path(project).resolve())
+                    agent_config = self.agent_configs.get(role, {})
+                    agent = create_agent(
+                        role,
+                        project_path=Path(project).resolve(),
+                        config=agent_config
+                    )
                     orchestrator.agents.append(agent)
 
                 loop = asyncio.new_event_loop()

@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import {
   Settings, Brain, Code, Database, MessageSquare,
   ChevronDown, ChevronUp, Sliders, Zap, Shield,
-  Eye, EyeOff, Copy, RotateCcw, Save
+  Eye, EyeOff, Copy, RotateCcw, Save, Users, X
 } from 'lucide-react';
 
 // ============================================================================
