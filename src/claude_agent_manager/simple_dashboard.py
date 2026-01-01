@@ -4147,7 +4147,7 @@ class AgentDashboard:
 
     def _show_agent_config_popup(self, role: str):
         """Show configuration popup for a specific agent."""
-        t = self.colors
+        t = self.theme
 
         config = self.agent_configs.get(role, {
             "model": "sonnet",
