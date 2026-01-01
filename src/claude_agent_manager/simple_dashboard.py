@@ -3537,6 +3537,9 @@ class AgentDashboard:
         self.team_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.root.title("Claude Agents - Team Mode")
 
+        # Resize window to fit Team Mode content
+        self.root.geometry("900x600")
+
     def _show_agents_panel(self):
         """Switch back to Agents view."""
         if hasattr(self, 'team_frame') and self.team_frame:
@@ -3544,6 +3547,9 @@ class AgentDashboard:
 
         self.card.pack(side=tk.LEFT, fill=tk.Y, expand=False)
         self.root.title("Claude Agents")
+
+        # Resize back to agents view size
+        self.root.geometry("460x400")
 
     def _build_team_frame(self):
         """Build the Team Mode frame (inline, not separate window)."""
@@ -3653,8 +3659,30 @@ class AgentDashboard:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.team_output.config(yscrollcommand=scrollbar.set)
 
+        # Read-only: block all keys except Ctrl+C, Ctrl+A, arrows, etc
+        def on_key(event):
+            # Allow Ctrl+C (copy), Ctrl+A (select all)
+            if event.state & 0x4:  # Ctrl pressed
+                if event.keysym.lower() in ('c', 'a'):
+                    return  # Allow
+            # Allow navigation keys
+            if event.keysym in ('Left', 'Right', 'Up', 'Down', 'Home', 'End', 'Prior', 'Next'):
+                return  # Allow
+            return "break"  # Block everything else
+
+        self.team_output.bind("<Key>", on_key)
+
+        # Right-click context menu for copy
+        def show_context_menu(event):
+            menu = tk.Menu(self.team_output, tearoff=0)
+            menu.add_command(label="Copy", command=lambda: self._copy_team_output())
+            menu.add_command(label="Select All", command=lambda: self.team_output.tag_add("sel", "1.0", "end"))
+            menu.tk_popup(event.x_root, event.y_root)
+
+        self.team_output.bind("<Button-3>", show_context_menu)
+
         # Right: Roles
-        right = tk.Frame(content, bg=t["btn_bg"], width=220)
+        right = tk.Frame(content, bg=t["btn_bg"], width=280)
         right.pack(side=tk.RIGHT, fill=tk.Y)
         right.pack_propagate(False)
 
@@ -3684,6 +3712,18 @@ class AgentDashboard:
     def _team_log(self, msg: str):
         self.team_output.insert(tk.END, msg + "\n")
         self.team_output.see(tk.END)
+
+    def _copy_team_output(self):
+        """Copy selected text or all text from team output."""
+        try:
+            if self.team_output.tag_ranges("sel"):
+                text = self.team_output.get("sel.first", "sel.last")
+            else:
+                text = self.team_output.get("1.0", "end-1c")
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+        except tk.TclError:
+            pass
 
     def _team_run(self):
         task = self.team_task_text.get("1.0", tk.END).strip()
