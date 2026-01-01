@@ -3644,6 +3644,66 @@ class AgentDashboard:
         quality_btn.pack(side=tk.LEFT)
         quality_btn.bind("<Button-1>", lambda e: self._team_quality())
 
+        # Model Selector row
+        model_frame = tk.Frame(left, bg=t["card_bg"])
+        model_frame.pack(fill=tk.X, pady=(0, 8))
+
+        tk.Label(model_frame, text="Model:", font=("Segoe UI", 9),
+                bg=t["card_bg"], fg=t["fg_dim"]).pack(side=tk.LEFT)
+
+        # Model options with costs
+        self.model_options = {
+            "auto": ("Auto", "Auto-select by complexity", "#6366F1"),
+            "haiku": ("Haiku", "$0.004/1k fast", "#10B981"),
+            "sonnet": ("Sonnet", "$0.015/1k balanced", "#F59E0B"),
+            "opus": ("Opus", "$0.075/1k smart", "#8B5CF6"),
+            "local": ("Local", "Free (Ollama)", "#059669"),
+        }
+
+        self.selected_model = tk.StringVar(value="auto")
+        self.model_btns = {}
+
+        for model_id, (name, desc, color) in self.model_options.items():
+            def make_click_handler(mid=model_id, col=color):
+                def handler(e=None):
+                    self.selected_model.set(mid)
+                    # Update button styles
+                    for m, btn in self.model_btns.items():
+                        if m == mid:
+                            btn.configure(bg=col, fg="#fff")
+                        else:
+                            btn.configure(bg=t["btn_bg"], fg=t["fg_dim"])
+                return handler
+
+            is_selected = model_id == "auto"
+            btn = tk.Label(model_frame, text=name, font=("Segoe UI", 8),
+                          bg=color if is_selected else t["btn_bg"],
+                          fg="#fff" if is_selected else t["fg_dim"],
+                          cursor="hand2", padx=8, pady=2)
+            btn.pack(side=tk.LEFT, padx=(6, 0))
+            btn.bind("<Button-1>", make_click_handler())
+
+            # Tooltip on hover
+            def show_tip(e, tip=desc):
+                e.widget._tip = tk.Label(self.root, text=tip, font=("Segoe UI", 8),
+                                         bg="#333", fg="#fff", padx=4, pady=2)
+                e.widget._tip.place(x=e.x_root - self.root.winfo_rootx(),
+                                   y=e.y_root - self.root.winfo_rooty() + 20)
+
+            def hide_tip(e):
+                if hasattr(e.widget, '_tip') and e.widget._tip:
+                    e.widget._tip.destroy()
+                    e.widget._tip = None
+
+            btn.bind("<Enter>", show_tip)
+            btn.bind("<Leave>", hide_tip)
+            self.model_btns[model_id] = btn
+
+        # Cost indicator
+        self.cost_label = tk.Label(model_frame, text="Est: $0.00", font=("Segoe UI", 8),
+                                   bg=t["card_bg"], fg=t["accent"])
+        self.cost_label.pack(side=tk.RIGHT)
+
         # Output
         tk.Label(left, text="Output", font=("Segoe UI", 10),
                  bg=t["card_bg"], fg=t["fg_dim"], anchor="w").pack(fill=tk.X, pady=(8, 4))
@@ -3962,6 +4022,17 @@ class AgentDashboard:
             return self.selected_reasoning.get()
         return "auto"
 
+    def _get_selected_model(self):
+        """Get selected model tier."""
+        if hasattr(self, 'selected_model'):
+            return self.selected_model.get()
+        return "auto"
+
+    def _update_cost_estimate(self, tokens: int = 0, cost: float = 0.0):
+        """Update cost label with estimate."""
+        if hasattr(self, 'cost_label'):
+            self.root.after(0, lambda: self.cost_label.configure(text=f"Est: ${cost:.3f}"))
+
     def _team_run(self):
         task = self.team_task_text.get("1.0", tk.END).strip()
         project = self.team_path_entry.get().strip() or "."
@@ -3972,6 +4043,7 @@ class AgentDashboard:
         selected_roles = self._get_selected_roles()
         use_graph = self.use_graph_memory.get() if hasattr(self, 'use_graph_memory') else True
         reasoning_pattern = self._get_reasoning_pattern()
+        selected_model = self._get_selected_model()
 
         pattern_names = {
             "auto": "Auto-select",
@@ -3982,7 +4054,16 @@ class AgentDashboard:
             "react": "ReAct"
         }
 
+        model_names = {
+            "auto": "Auto (by complexity)",
+            "haiku": "Claude Haiku",
+            "sonnet": "Claude Sonnet",
+            "opus": "Claude Opus",
+            "local": "Local (Ollama)"
+        }
+
         self._team_log(f"[TEAM] Starting with roles: {', '.join(selected_roles)}")
+        self._team_log(f"[TEAM] Model: {model_names.get(selected_model, selected_model)}")
         self._team_log(f"[TEAM] Reasoning: {pattern_names.get(reasoning_pattern, reasoning_pattern)}")
         self._team_log(f"[TEAM] Graph Memory: {'ON' if use_graph else 'OFF'}")
         self._team_log(f"[TEAM] Task: {task[:60]}...")
