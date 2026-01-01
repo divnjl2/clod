@@ -52,6 +52,9 @@ from .memory_tools import create_memory_app
 # Crew CLI (native clod agents - no external API!)
 from .crew import create_crew_app
 
+# Team Mode CLI (multi-agent orchestration)
+from .team_cli import team_app
+
 # Subagents commands
 from .subagents import create_subagents_commands
 
@@ -65,6 +68,9 @@ app.add_typer(create_memory_app(), name="memory", help="Memory inspection tools"
 
 # Crew commands (native agents, no API)
 app.add_typer(create_crew_app(), name="crew", help="Multi-agent crew (no external API)")
+
+# Team Mode commands (multi-agent orchestration with best practices)
+app.add_typer(team_app, name="team", help="Team Mode: AutoGen + CrewAI + SWE-agent + Aider + MetaGPT")
 
 # Subagent commands
 enable_cmd, disable_cmd = create_subagents_commands()

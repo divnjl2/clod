@@ -309,6 +309,10 @@ def write_claude_settings(project_path: Path, agent: AgentRecord) -> Path:
         }
     }
 
+    # Add bypassPermissions mode for autopilot
+    if agent.autopilot_enabled:
+        settings["permissions"]["defaultMode"] = "bypassPermissions"
+
     # Preserve existing settings if any
     if settings_path.exists():
         try:

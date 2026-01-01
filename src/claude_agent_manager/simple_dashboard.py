@@ -927,6 +927,291 @@ class TerminalPanel(tk.Frame):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TEAM MODE PANEL
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TeamModePanel(tk.Toplevel):
+    """Team Mode panel for multi-agent orchestration."""
+
+    def __init__(self, parent: tk.Widget, theme: Dict, dashboard: 'AgentDashboard'):
+        super().__init__(parent)
+        self.theme = theme
+        self.dashboard = dashboard
+        self._running = False
+
+        self.title("Team Mode")
+        self.configure(bg=theme["card_bg"])
+        self.geometry("700x550")
+        self.minsize(600, 450)
+
+        self.transient(parent)
+        self.after(50, lambda: set_title_bar_color(self, theme == THEMES["dark"]))
+
+        self._build_ui()
+
+    def _build_ui(self):
+        t = self.theme
+
+        # Header
+        header = tk.Frame(self, bg=t["card_bg"])
+        header.pack(fill=tk.X, padx=12, pady=(10, 8))
+
+        title = tk.Label(
+            header, text="Team Mode",
+            font=("Segoe UI Semibold", 14),
+            bg=t["card_bg"], fg=t["fg"]
+        )
+        title.pack(side=tk.LEFT)
+
+        subtitle = tk.Label(
+            header, text="AutoGen + CrewAI + SWE-agent + Aider + MetaGPT",
+            font=("Segoe UI", 9),
+            bg=t["card_bg"], fg=t["fg_dim"]
+        )
+        subtitle.pack(side=tk.LEFT, padx=(10, 0))
+
+        # Usage bar (API limits) - right side
+        self.usage_bar = UsageBar(
+            header,
+            theme=t,
+            refresh_interval=30000
+        )
+        self.usage_bar.pack(side=tk.RIGHT)
+
+        # Separator
+        sep = tk.Frame(self, bg=t["separator"], height=1)
+        sep.pack(fill=tk.X, padx=12, pady=(0, 8))
+
+        # Main content
+        content = tk.Frame(self, bg=t["card_bg"])
+        content.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+
+        # Left: Task input + buttons
+        left = tk.Frame(content, bg=t["card_bg"], width=350)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8))
+
+        # Task description
+        tk.Label(
+            left, text="Task Description",
+            font=("Segoe UI", 10),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 4))
+
+        self.task_text = tk.Text(
+            left, font=("Consolas", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            relief="flat", height=5,
+            wrap="word", padx=8, pady=8
+        )
+        self.task_text.pack(fill=tk.X, pady=(0, 8))
+        self.task_text.insert("1.0", "Add user authentication with JWT tokens")
+
+        # Project path
+        tk.Label(
+            left, text="Project Path",
+            font=("Segoe UI", 10),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(0, 4))
+
+        path_frame = tk.Frame(left, bg=t["btn_bg"])
+        path_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.path_entry = tk.Entry(
+            path_frame, font=("Consolas", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            relief="flat"
+        )
+        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=6)
+        self.path_entry.insert(0, ".")
+
+        browse_btn = tk.Label(
+            path_frame, text="...",
+            font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg_dim"],
+            cursor="hand2", padx=8
+        )
+        browse_btn.pack(side=tk.RIGHT, pady=6)
+        browse_btn.bind("<Button-1>", lambda e: self._browse_folder())
+
+        # Buttons
+        btn_frame = tk.Frame(left, bg=t["card_bg"])
+        btn_frame.pack(fill=tk.X, pady=(0, 8))
+
+        self.run_btn = tk.Label(
+            btn_frame, text="Run Team",
+            font=("Segoe UI Semibold", 10),
+            bg=t["accent"], fg="#fff",
+            cursor="hand2", padx=16, pady=8
+        )
+        self.run_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self.run_btn.bind("<Button-1>", lambda e: self._run_team())
+
+        self.plan_btn = tk.Label(
+            btn_frame, text="Create Plan",
+            font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            cursor="hand2", padx=16, pady=8
+        )
+        self.plan_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self.plan_btn.bind("<Button-1>", lambda e: self._create_plan())
+
+        quality_btn = tk.Label(
+            btn_frame, text="Quality Check",
+            font=("Segoe UI", 10),
+            bg=t["btn_bg"], fg=t["fg"],
+            cursor="hand2", padx=16, pady=8
+        )
+        quality_btn.pack(side=tk.LEFT)
+        quality_btn.bind("<Button-1>", lambda e: self._run_quality())
+
+        # Output area
+        tk.Label(
+            left, text="Output",
+            font=("Segoe UI", 10),
+            bg=t["card_bg"], fg=t["fg_dim"], anchor="w"
+        ).pack(fill=tk.X, pady=(8, 4))
+
+        self.output_text = tk.Text(
+            left, font=("Consolas", 9),
+            bg=t["bg"], fg=t["fg"],
+            relief="flat", height=12,
+            wrap="word", padx=8, pady=8
+        )
+        self.output_text.pack(fill=tk.BOTH, expand=True)
+        # Allow selecting/copying but not editing
+        self.output_text.bind("<Key>", lambda e: "break" if e.keysym not in ("c", "C", "a", "A") or not (e.state & 4) else None)
+
+        # Right: Roles info
+        right = tk.Frame(content, bg=t["btn_bg"], width=250)
+        right.pack(side=tk.RIGHT, fill=tk.Y, padx=(8, 0))
+        right.pack_propagate(False)
+
+        tk.Label(
+            right, text="Agent Roles",
+            font=("Segoe UI Semibold", 11),
+            bg=t["btn_bg"], fg=t["fg"]
+        ).pack(fill=tk.X, padx=12, pady=(12, 8))
+
+        roles_data = [
+            ("Architect", "Design architecture, APIs", "-"),
+            ("Backend", "Server-side logic", "Architect"),
+            ("Frontend", "UI components", "Architect, Backend"),
+            ("QA", "Tests, quality", "Backend, Frontend"),
+            ("Reviewer", "Code review", "QA"),
+            ("Refactoring", "Code improvement", "Reviewer"),
+        ]
+
+        for role, desc, deps in roles_data:
+            role_frame = tk.Frame(right, bg=t["btn_bg"])
+            role_frame.pack(fill=tk.X, padx=12, pady=4)
+
+            tk.Label(
+                role_frame, text=role,
+                font=("Segoe UI Semibold", 9),
+                bg=t["btn_bg"], fg=t["accent"]
+            ).pack(anchor="w")
+
+            tk.Label(
+                role_frame, text=desc,
+                font=("Segoe UI", 8),
+                bg=t["btn_bg"], fg=t["fg"]
+            ).pack(anchor="w")
+
+            tk.Label(
+                role_frame, text=f"Waits: {deps}",
+                font=("Segoe UI", 8),
+                bg=t["btn_bg"], fg=t["fg_dim"]
+            ).pack(anchor="w")
+
+    def _browse_folder(self):
+        from tkinter import filedialog
+        folder = filedialog.askdirectory()
+        if folder:
+            self.path_entry.delete(0, tk.END)
+            self.path_entry.insert(0, folder)
+
+    def _log(self, msg: str):
+        self.output_text.insert(tk.END, msg + "\n")
+        self.output_text.see(tk.END)
+
+    def _run_team(self):
+        if self._running:
+            return
+
+        task = self.task_text.get("1.0", tk.END).strip()
+        project = self.path_entry.get().strip()
+
+        if not task:
+            self._log("[ERROR] Task description is empty")
+            return
+
+        self._running = True
+        self.run_btn.configure(bg=self.theme["fg_dim"])
+        self._log(f"[TEAM] Starting: {task[:50]}...")
+        self._log(f"[TEAM] Project: {project}")
+
+        # Run in thread
+        import threading
+        def run():
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["python", "-m", "claude_agent_manager.cli", "team", "run", task, "--project", project],
+                    capture_output=True, text=True, timeout=300
+                )
+                self.after(0, lambda: self._log(result.stdout or result.stderr or "[DONE]"))
+            except Exception as e:
+                self.after(0, lambda: self._log(f"[ERROR] {e}"))
+            finally:
+                self._running = False
+                self.after(0, lambda: self.run_btn.configure(bg=self.theme["accent"]))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _create_plan(self):
+        task = self.task_text.get("1.0", tk.END).strip()
+        project = self.path_entry.get().strip()
+
+        if not task:
+            self._log("[ERROR] Task description is empty")
+            return
+
+        self._log(f"[PLAN] Creating plan for: {task[:50]}...")
+
+        import threading
+        def run():
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["python", "-m", "claude_agent_manager.cli", "team", "plan", task, "--project", project],
+                    capture_output=True, text=True, timeout=60
+                )
+                self.after(0, lambda: self._log(result.stdout or result.stderr or "[DONE]"))
+            except Exception as e:
+                self.after(0, lambda: self._log(f"[ERROR] {e}"))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _run_quality(self):
+        project = self.path_entry.get().strip()
+        self._log(f"[QUALITY] Checking: {project}")
+
+        import threading
+        def run():
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["python", "-m", "claude_agent_manager.cli", "team", "quality", "--project", project],
+                    capture_output=True, text=True, timeout=120
+                )
+                self.after(0, lambda: self._log(result.stdout or result.stderr or "[DONE]"))
+            except Exception as e:
+                self.after(0, lambda: self._log(f"[ERROR] {e}"))
+
+        threading.Thread(target=run, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MEMORY PANEL (Graph Memory Viewer)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -3155,6 +3440,18 @@ class AgentDashboard:
         self.tile_btn.bind("<Enter>", lambda e: self.tile_btn.configure(fg=self.theme["accent"]))
         self.tile_btn.bind("<Leave>", lambda e: self.tile_btn.configure(fg=self.theme["fg_dim"]))
 
+        # Team Mode button (before memory button)
+        self.team_btn = tk.Label(
+            self.footer, text="⚡",  # Team/lightning symbol
+            font=("Segoe UI", 10),
+            bg=t["card_bg"], fg=t["fg_dim"],
+            cursor="hand2"
+        )
+        self.team_btn.pack(side=tk.RIGHT, padx=(0, 10))
+        self.team_btn.bind("<Button-1>", lambda e: self._show_team_panel())
+        self.team_btn.bind("<Enter>", lambda e: self.team_btn.configure(fg=self.theme["accent"]))
+        self.team_btn.bind("<Leave>", lambda e: self.team_btn.configure(fg=self.theme["fg_dim"]))
+
         # Memory button (before tile button)
         self.memory_btn = tk.Label(
             self.footer, text="⟁",  # Memory/brain-like symbol
@@ -3207,6 +3504,26 @@ class AgentDashboard:
         x = self.root.winfo_x() + (self.root.winfo_width() - 600) // 2
         y = self.root.winfo_y() + (self.root.winfo_height() - 500) // 2
         self._memory_panel.geometry(f"+{x}+{y}")
+
+    def _show_team_panel(self):
+        """Show the Team Mode panel."""
+        # Check if already open
+        if hasattr(self, '_team_panel') and self._team_panel:
+            try:
+                self._team_panel.lift()
+                self._team_panel.focus_force()
+                return
+            except tk.TclError:
+                pass
+
+        # Create new team panel
+        self._team_panel = TeamModePanel(self.root, self.theme, self)
+
+        # Center on parent
+        self._team_panel.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 700) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 550) // 2
+        self._team_panel.geometry(f"+{x}+{y}")
 
     def _show_app_settings(self):
         """Show application settings dialog."""
