@@ -91,17 +91,30 @@ class TeamOrchestrator:
     - DevOps-GPT: Task decomposition
     """
 
+    # Model mapping for UI -> API
+    MODEL_MAPPING = {
+        "auto": "claude-sonnet-4-20250514",  # Default to balanced
+        "haiku": "claude-3-haiku-20240307",
+        "sonnet": "claude-sonnet-4-20250514",
+        "opus": "claude-opus-4-20250514",
+        "local": "llama3:70b",  # For Ollama
+    }
+
     def __init__(
         self,
         project_path: Path,
         max_parallel: int = 3,
         auto_merge: bool = True,
-        quality_gates: bool = True
+        quality_gates: bool = True,
+        model: str = "auto"
     ):
         self.project_path = Path(project_path).resolve()
         self.max_parallel = max_parallel
         self.auto_merge = auto_merge
         self.use_quality_gates = quality_gates
+
+        # Resolve model name
+        self.model = self.MODEL_MAPPING.get(model, model)
 
         # Check if git repo exists
         self.is_git_repo = (self.project_path / ".git").exists()
@@ -196,10 +209,11 @@ RULES:
 Output ONLY valid JSON, no explanations."""
 
         response = self.client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=self.model,
             max_tokens=4000,
             messages=[{"role": "user", "content": planning_prompt}]
         )
+        console.print(f"[dim]Using model: {self.model}[/dim]")
 
         # Парсим план
         try:
@@ -738,7 +752,8 @@ Output ONLY valid JSON, no explanations."""
 async def run_team_task(
     project_path: str,
     task: str,
-    max_parallel: int = 3
+    max_parallel: int = 3,
+    model: str = "auto"
 ) -> Dict[str, Any]:
     """
     Быстрый запуск командной задачи.
@@ -746,12 +761,14 @@ async def run_team_task(
     Пример:
         results = await run_team_task(
             "~/my-project",
-            "Add user authentication with JWT"
+            "Add user authentication with JWT",
+            model="sonnet"  # или "haiku", "opus", "local"
         )
     """
     orchestrator = TeamOrchestrator(
         Path(project_path).expanduser(),
-        max_parallel=max_parallel
+        max_parallel=max_parallel,
+        model=model
     )
 
     await orchestrator.create_plan(task)
@@ -760,7 +777,7 @@ async def run_team_task(
     return results
 
 
-def quick_plan(project_path: str, task: str) -> TeamPlan:
+def quick_plan(project_path: str, task: str, model: str = "auto") -> TeamPlan:
     """Быстрое создание плана (синхронно)."""
-    orchestrator = TeamOrchestrator(Path(project_path).expanduser())
+    orchestrator = TeamOrchestrator(Path(project_path).expanduser(), model=model)
     return asyncio.run(orchestrator.create_plan(task))

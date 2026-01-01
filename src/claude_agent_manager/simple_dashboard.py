@@ -4155,7 +4155,7 @@ class AgentDashboard:
 
                 self.root.after(0, lambda: self._team_log("[TEAM] Initializing orchestrator..."))
 
-                orchestrator = TeamOrchestrator(Path(project).resolve())
+                orchestrator = TeamOrchestrator(Path(project).resolve(), model=selected_model)
 
                 # Add selected agents
                 for role in selected_roles:
@@ -4198,8 +4198,10 @@ class AgentDashboard:
             return
 
         selected_roles = self._get_selected_roles()
+        selected_model = self._get_selected_model()
         self._team_log(f"[PLAN] Creating plan for: {task[:60]}...")
         self._team_log(f"[PLAN] Roles: {', '.join(selected_roles)}")
+        self._team_log(f"[PLAN] Model: {selected_model}")
 
         import threading
         def run():
@@ -4210,7 +4212,7 @@ class AgentDashboard:
                 except ImportError:
                     from claude_agent_manager.team import TeamOrchestrator, create_agent
 
-                orchestrator = TeamOrchestrator(Path(project).resolve())
+                orchestrator = TeamOrchestrator(Path(project).resolve(), model=selected_model)
 
                 # Add selected agents
                 for role in selected_roles:
