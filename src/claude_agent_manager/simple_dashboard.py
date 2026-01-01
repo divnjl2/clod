@@ -4402,7 +4402,7 @@ class AgentDashboard:
                         project_path=Path(project).resolve(),
                         config=agent_config
                     )
-                    orchestrator.agents.append(agent)
+                    orchestrator.agents[role] = agent
                     model = agent_config.get("model", "sonnet")
                     self.root.after(0, lambda r=role, m=model: self._team_log(f"[TEAM] Added agent: {r} (model: {m})"))
 
@@ -4465,7 +4465,7 @@ class AgentDashboard:
                         project_path=Path(project).resolve(),
                         config=agent_config
                     )
-                    orchestrator.agents.append(agent)
+                    orchestrator.agents[role] = agent
 
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
