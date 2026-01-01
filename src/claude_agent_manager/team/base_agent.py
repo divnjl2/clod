@@ -66,6 +66,19 @@ class AgentConfig:
     can_execute_code: bool = True
     max_consecutive_replies: int = 10
 
+    # Model name mapping (short -> full API name)
+    MODEL_MAPPING = {
+        "auto": "claude-sonnet-4-20250514",
+        "haiku": "claude-3-haiku-20240307",
+        "sonnet": "claude-sonnet-4-20250514",
+        "opus": "claude-opus-4-20250514",
+        "local": "llama3:70b",
+    }
+
+    def get_api_model(self) -> str:
+        """Get full API model name from short name or return as-is."""
+        return self.MODEL_MAPPING.get(self.model, self.model)
+
 
 class ReplyTrigger:
     """
@@ -205,8 +218,11 @@ class BaseAgent(ABC):
         api_messages = [m.to_api_format() for m in messages]
 
         try:
+            # Get full API model name (handles short names like "sonnet" -> "claude-sonnet-4-20250514")
+            api_model = self.config.get_api_model()
+
             response = self.client.messages.create(
-                model=self.config.model,
+                model=api_model,
                 max_tokens=self.config.max_tokens,
                 system=system,
                 messages=api_messages,

@@ -730,6 +730,8 @@ def create_agent(
                 agent.config.max_tokens = config["max_tokens"]
             if "system_prompt" in config:
                 agent.config.system_prompt = config["system_prompt"]
+                # Also update the direct attribute used in API calls
+                agent.system_prompt = config["system_prompt"]
 
     return agent
 
