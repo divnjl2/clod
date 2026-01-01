@@ -3537,8 +3537,8 @@ class AgentDashboard:
         self.team_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.root.title("Claude Agents - Team Mode")
 
-        # Resize window to fit Team Mode content
-        self.root.geometry("900x600")
+        # Resize window to fit Team Mode content (2-column layout)
+        self.root.geometry("1050x620")
 
     def _show_agents_panel(self):
         """Switch back to Agents view."""
@@ -3681,24 +3681,33 @@ class AgentDashboard:
 
         self.team_output.bind("<Button-3>", show_context_menu)
 
-        # Right: Roles panel with custom toggles
-        right = tk.Frame(content, bg=t["btn_bg"], width=260)
+        # Right: 2-column panel (Roles + Reasoning Patterns)
+        right = tk.Frame(content, bg=t["btn_bg"], width=420)
         right.pack(side=tk.RIGHT, fill=tk.BOTH)
         right.pack_propagate(False)
 
-        # Header
-        roles_header = tk.Frame(right, bg=t["btn_bg"])
-        roles_header.pack(fill=tk.X, padx=12, pady=(12, 8))
+        # Split into 2 columns
+        right_left = tk.Frame(right, bg=t["btn_bg"], width=200)
+        right_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 1))
+        right_left.pack_propagate(False)
 
-        tk.Label(roles_header, text="Agent Roles", font=("Segoe UI Semibold", 11),
+        right_right = tk.Frame(right, bg=t["btn_bg"], width=200)
+        right_right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        right_right.pack_propagate(False)
+
+        # === LEFT COLUMN: Agent Roles ===
+        roles_header = tk.Frame(right_left, bg=t["btn_bg"])
+        roles_header.pack(fill=tk.X, padx=8, pady=(8, 6))
+
+        tk.Label(roles_header, text="Agent Roles", font=("Segoe UI Semibold", 10),
                  bg=t["btn_bg"], fg=t["fg"]).pack(side=tk.LEFT)
 
-        # Scrollable canvas
-        roles_canvas = tk.Canvas(right, bg=t["btn_bg"], highlightthickness=0, width=236)
-        roles_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(12, 4))
+        # Scrollable canvas for roles
+        roles_canvas = tk.Canvas(right_left, bg=t["btn_bg"], highlightthickness=0)
+        roles_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 2))
 
         roles_scrollable = tk.Frame(roles_canvas, bg=t["btn_bg"])
-        canvas_window = roles_canvas.create_window((0, 0), window=roles_scrollable, anchor="nw", width=232)
+        canvas_window = roles_canvas.create_window((0, 0), window=roles_scrollable, anchor="nw", width=180)
 
         def on_frame_configure(e):
             roles_canvas.configure(scrollregion=roles_canvas.bbox("all"))
@@ -3817,60 +3826,103 @@ class AgentDashboard:
                 dep_lbl.bind("<MouseWheel>", on_mousewheel)
 
         # Separator
-        tk.Frame(roles_scrollable, bg=t["separator"], height=1).pack(fill=tk.X, pady=(12, 8))
+        tk.Frame(roles_scrollable, bg=t["separator"], height=1).pack(fill=tk.X, pady=(8, 6))
 
         # Graph Memory toggle
         gm_frame = tk.Frame(roles_scrollable, bg=t["btn_bg"])
-        gm_frame.pack(fill=tk.X, pady=(0, 8))
+        gm_frame.pack(fill=tk.X, pady=(0, 4))
         gm_frame.bind("<MouseWheel>", on_mousewheel)
 
         self.use_graph_memory = tk.BooleanVar(value=True)
         gm_toggle = create_toggle(gm_frame, self.use_graph_memory, t["accent"], t["btn_bg"])
-        gm_toggle.pack(side=tk.LEFT, padx=(0, 8))
+        gm_toggle.pack(side=tk.LEFT, padx=(0, 6))
 
         tk.Label(gm_frame, text="Graph Memory", font=("Segoe UI", 9),
                 bg=t["btn_bg"], fg=t["fg"]).pack(side=tk.LEFT)
 
         tk.Label(gm_frame, text="MCP", font=("Segoe UI", 7),
-                bg=t["accent"], fg="#fff", padx=4, pady=1).pack(side=tk.LEFT, padx=(6, 0))
+                bg=t["accent"], fg="#fff", padx=4, pady=1).pack(side=tk.LEFT, padx=(4, 0))
 
-        # Separator
-        tk.Frame(roles_scrollable, bg=t["separator"], height=1).pack(fill=tk.X, pady=(8, 8))
+        # === RIGHT COLUMN: Reasoning Patterns ===
+        patterns_header = tk.Frame(right_right, bg=t["btn_bg"])
+        patterns_header.pack(fill=tk.X, padx=8, pady=(8, 6))
 
-        # Reasoning Pattern selector
-        rp_label = tk.Label(roles_scrollable, text="Reasoning Pattern", font=("Segoe UI Semibold", 9),
-                           bg=t["btn_bg"], fg=t["fg"])
-        rp_label.pack(anchor="w", pady=(0, 4))
-        rp_label.bind("<MouseWheel>", on_mousewheel)
+        tk.Label(patterns_header, text="Reasoning Pattern", font=("Segoe UI Semibold", 10),
+                 bg=t["btn_bg"], fg=t["fg"]).pack(side=tk.LEFT)
 
-        # Pattern options with descriptions
+        # Pattern definitions with colors and icons
         self.reasoning_patterns = {
-            "auto": ("Auto", "Auto-select based on task"),
-            "cot": ("Chain-of-Thought", "Step-by-step reasoning"),
-            "tot": ("Tree-of-Thoughts", "Multiple approaches"),
-            "reflection": ("Reflection", "Self-critique & improve"),
-            "self_consistency": ("Self-Consistency", "Multiple attempts"),
-            "react": ("ReAct", "Reason + Act cycle"),
+            "auto": ("Auto", "Task-based selection", "#6366F1", "⚡"),
+            "cot": ("Chain-of-Thought", "Step-by-step", "#10B981", "→"),
+            "tot": ("Tree-of-Thoughts", "Multiple paths", "#8B5CF6", "🌳"),
+            "reflection": ("Reflection", "Self-critique", "#F59E0B", "🔄"),
+            "self_consistency": ("Self-Consistency", "N attempts", "#EF4444", "✓✓"),
+            "react": ("ReAct", "Reason + Act", "#0EA5E9", "⚙"),
         }
 
         self.selected_reasoning = tk.StringVar(value="auto")
+        self.pattern_buttons = {}
 
-        for pattern_id, (name, desc) in self.reasoning_patterns.items():
-            rf = tk.Frame(roles_scrollable, bg=t["btn_bg"])
-            rf.pack(fill=tk.X, pady=2)
-            rf.bind("<MouseWheel>", on_mousewheel)
+        patterns_frame = tk.Frame(right_right, bg=t["btn_bg"])
+        patterns_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
-            rb = tk.Radiobutton(
-                rf, text=name, variable=self.selected_reasoning, value=pattern_id,
-                font=("Segoe UI", 9), bg=t["btn_bg"], fg=t["fg"],
-                activebackground=t["btn_bg"], selectcolor=t["bg"],
-                highlightthickness=0
-            )
-            rb.pack(side=tk.LEFT)
-            rb.bind("<MouseWheel>", on_mousewheel)
+        def create_pattern_button(parent, pattern_id, name, desc, color, icon):
+            """Create styled pattern selector button."""
+            is_selected = self.selected_reasoning.get() == pattern_id
 
-            tk.Label(rf, text=f"- {desc}", font=("Segoe UI", 8),
-                    bg=t["btn_bg"], fg=t["fg_dim"]).pack(side=tk.LEFT, padx=(4, 0))
+            btn_frame = tk.Frame(parent, bg=t["btn_bg"])
+            btn_frame.pack(fill=tk.X, pady=2)
+
+            # Card with color accent
+            card = tk.Frame(btn_frame, bg=color if is_selected else t["bg"])
+            card.pack(fill=tk.X, padx=1, pady=1)
+
+            inner = tk.Frame(card, bg=t["bg"] if is_selected else t["btn_bg"])
+            inner.pack(fill=tk.X, padx=2, pady=2)
+
+            # Icon + Name row
+            top_row = tk.Frame(inner, bg=inner["bg"])
+            top_row.pack(fill=tk.X, padx=6, pady=(4, 0))
+
+            icon_lbl = tk.Label(top_row, text=icon, font=("Segoe UI", 10),
+                               bg=inner["bg"], fg=color)
+            icon_lbl.pack(side=tk.LEFT)
+
+            name_lbl = tk.Label(top_row, text=name, font=("Segoe UI Semibold", 9),
+                               bg=inner["bg"], fg=t["fg"] if is_selected else t["fg_dim"])
+            name_lbl.pack(side=tk.LEFT, padx=(4, 0))
+
+            # Selected indicator
+            if is_selected:
+                sel_indicator = tk.Label(top_row, text="●", font=("Segoe UI", 8),
+                                        bg=inner["bg"], fg=color)
+                sel_indicator.pack(side=tk.RIGHT)
+
+            # Description
+            desc_lbl = tk.Label(inner, text=desc, font=("Segoe UI", 8),
+                               bg=inner["bg"], fg=t["fg_dim"], anchor="w")
+            desc_lbl.pack(fill=tk.X, padx=6, pady=(0, 4))
+
+            # Click handler
+            def on_click(e=None, pid=pattern_id):
+                self.selected_reasoning.set(pid)
+                refresh_pattern_buttons()
+
+            for widget in [btn_frame, card, inner, top_row, icon_lbl, name_lbl, desc_lbl]:
+                widget.bind("<Button-1>", on_click)
+                widget.configure(cursor="hand2")
+
+            return btn_frame
+
+        def refresh_pattern_buttons():
+            """Refresh all pattern buttons to reflect selection."""
+            for widget in patterns_frame.winfo_children():
+                widget.destroy()
+            for pattern_id, (name, desc, color, icon) in self.reasoning_patterns.items():
+                create_pattern_button(patterns_frame, pattern_id, name, desc, color, icon)
+
+        # Initial render
+        refresh_pattern_buttons()
 
     def _team_browse_folder(self):
         from tkinter import filedialog
