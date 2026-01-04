@@ -374,4 +374,40 @@ def update_agent_autopilot(agent_root: Path, agent_id: str, enabled: bool) -> Ag
     project_path = Path(agent.project_path)
     write_claude_settings(project_path, agent)
 
+    # Also write to agent's isolated config (for isolated runs)
+    # Claude Code on Windows may look in USERPROFILE/.claude/ or APPDATA/.claude/
+    agent_dir = agent_root / agent_id
+    runs_dir = agent_dir / "runs"
+    if runs_dir.exists():
+        # Find latest run directory
+        run_dirs = sorted(runs_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)
+        for run_dir in run_dirs[:1]:  # Only latest run
+            perms = agent.get_effective_permissions()
+            settings = {"permissions": {"allow": perms["allow"], "deny": perms["deny"]}}
+            # Write to .config/.claude/ (APPDATA)
+            for subdir in [".config", ".home"]:
+                isolated_config = run_dir / subdir / ".claude"
+                isolated_config.mkdir(parents=True, exist_ok=True)
+                settings_path = isolated_config / "settings.json"
+                settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+                print(f"[AUTOPILOT] Wrote settings: {settings_path}")
+
+    # Update run.cmd to add/remove --dangerously-skip-permissions flag
+    try:
+        agent_dir = agent_root / agent_id
+        run_cmd_path = agent_dir / "run.cmd"
+        if run_cmd_path.exists():
+            content = run_cmd_path.read_text(encoding="utf-8")
+            # Replace the claude command line
+            if enabled:
+                # Add flag if not present
+                content = content.replace("\nclaude\n", "\nclaude --dangerously-skip-permissions\n")
+            else:
+                # Remove flag
+                content = content.replace("\nclaude --dangerously-skip-permissions\n", "\nclaude\n")
+            run_cmd_path.write_text(content, encoding="utf-8")
+            print(f"[AUTOPILOT] Updated run.cmd: autopilot={enabled}")
+    except Exception as e:
+        print(f"[AUTOPILOT] Failed to update run.cmd: {e}")
+
     return agent

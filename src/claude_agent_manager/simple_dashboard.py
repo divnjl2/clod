@@ -2083,11 +2083,12 @@ class AgentConfigDialog:
         },
     }
 
-    def __init__(self, root: tk.Tk, agent_data: Dict, theme: Dict, on_save: Callable):
+    def __init__(self, root: tk.Tk, agent_data: Dict, theme: Dict, on_save: Callable, on_autopilot_change: Optional[Callable] = None):
         self.root = root
         self.agent_data = agent_data
         self.theme = theme
         self.on_save = on_save
+        self.on_autopilot_change = on_autopilot_change
         self.project_path = Path(agent_data["project_path"])
 
         # Get agent_dir from manager
@@ -2512,17 +2513,26 @@ class AgentConfigDialog:
                         btn.configure(bg=t["btn_bg"], fg=t["fg"])
                 self._update_preset_desc()
 
-            # Auto-save autopilot state immediately
+            # Immediately save autopilot state
             if HAS_BACKEND and manager:
                 try:
                     from claude_agent_manager.registry import update_agent_autopilot
                     agent_root = manager.get_agent_root()
                     update_agent_autopilot(agent_root, self.agent_data["id"], state)
-                    # Trigger card refresh via on_save callback
-                    if self.on_save:
-                        self.on_save(self.agent_data["id"], None)
-                except Exception:
-                    pass
+                    print(f"[AUTOPILOT] Saved autopilot={state} for {self.agent_data['id']}")
+                    # Notify dashboard to refresh agent cards
+                    if self.on_autopilot_change:
+                        self.on_autopilot_change()
+                    # Show restart reminder - Claude Code needs restart to pick up new settings
+                    from tkinter import messagebox
+                    action = "enabled" if state else "disabled"
+                    messagebox.showinfo(
+                        "Restart Required",
+                        f"Autopilot {action}.\n\nRestart the agent for changes to take effect.",
+                        parent=self.dialog
+                    )
+                except Exception as e:
+                    print(f"[AUTOPILOT] Save error: {e}")
 
         self.autopilot_switch = ToggleSwitch(
             autopilot_inner,
@@ -6204,14 +6214,15 @@ class AgentDashboard:
                     updated.config = config
                     save_agent(agent_root, updated)
 
-                    # Regenerate run.cmd with new env vars
+                    # Regenerate run.cmd with new env vars (includes autopilot flag)
                     agent_dir = agent_root / agent_id
                     from claude_agent_manager.manager import _write_run_cmd
                     title = f"{rec.purpose} | :{rec.port}"
                     _write_run_cmd(
                         agent_dir, title=title, port=rec.port,
                         data_dir=agent_dir, project_path=Path(rec.project_path),
-                        proxy=rec.proxy, config=config
+                        proxy=rec.proxy, config=config,
+                        autopilot=rec.autopilot_enabled
                     )
                 except Exception as e:
                     print(f"Config save error: {e}")
@@ -6220,7 +6231,14 @@ class AgentDashboard:
             # Refresh cards to show updated autopilot badge
             self._load_agents()
 
-        AgentConfigDialog(self.root, agent, self.theme, on_config_save)
+            # Always refresh dashboard to show updated autopilot badge
+            self.root.after(100, self._load_agents)
+
+        def on_autopilot_change():
+            # Refresh dashboard immediately when autopilot is toggled
+            self._load_agents()
+
+        AgentConfigDialog(self.root, agent, self.theme, on_config_save, on_autopilot_change)
 
     def _open_memory_viewer(self, agent: Dict):
         if HAS_BACKEND:

@@ -95,6 +95,7 @@ def _write_run_cmd(
     config: Optional[AgentConfigOptions] = None,
     runner_env: Optional[RunnerEnv] = None,
     workdir: Optional[Path] = None,
+    autopilot: bool = False,
 ) -> Path:
     """Write the run.cmd script for an agent."""
     run_cmd = agent_dir / "run.cmd"
@@ -145,6 +146,9 @@ def _write_run_cmd(
     if merged_env:
         env_lines = "".join(f'set "{k}={v}"\n' for k, v in merged_env.items())
 
+    # Build claude command with optional autopilot flag
+    claude_cmd = "claude --dangerously-skip-permissions" if autopilot else "claude"
+
     content = (
         "@echo off\n"
         "chcp 65001 >nul 2>&1\n"
@@ -155,7 +159,7 @@ def _write_run_cmd(
         f"{proxy_lines}"
         f"{config_lines}"
         f"cd /d \"{workdir if workdir else project_path}\"\n"
-        "claude\n"
+        f"{claude_cmd}\n"
     )
     run_cmd.write_text(content, encoding="utf-8")
     return run_cmd
@@ -455,6 +459,7 @@ def start_agent(agent_id: str, cfg: Optional[AppConfig] = None, skip_cmd: bool =
                     config=agent.config,
                     runner_env=runner_env,
                     workdir=project_path,
+                    autopilot=agent.autopilot_enabled,
                 )
                 cmd_pid = spawn_cmd_window(run_cmd, workdir=str(project_path), env=runner_env.env)
                 registry.attach_pid(run_id, "cmd", cmd_pid)
